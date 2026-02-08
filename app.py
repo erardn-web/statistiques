@@ -15,20 +15,23 @@ def convertir_date(val):
         return pd.NaT
 
 def calculer_liquidites_fournisseur(f_attente, p_hist, jours_horizons):
-    """Estimation croisée Assureur ET Fournisseur pour la précision métiers"""
+    """Estimation précise par Assureur ET Fournisseur"""
     liq = {h: 0.0 for h in jours_horizons}
     taux_glob = {h: 0.0 for h in jours_horizons}
     if p_hist.empty: return liq, taux_glob
     
     for h in jours_horizons:
+        # Probabilités par couple Assureur/Fournisseur
         stats_croisees = p_hist.groupby(["assureur", "fournisseur"])["delai"].apply(lambda x: (x <= h).mean()).to_dict()
-        stats_fourn_seul = p_hist.groupby("fournisseur")["delai"].apply(lambda x: (x <= h).mean()).to_dict()
+        # Probabilités par Fournisseur seul (secours 1)
+        stats_fourn = p_hist.groupby("fournisseur")["delai"].apply(lambda x: (x <= h).mean()).to_dict()
+        # Probabilité globale (secours 2)
         taux_glob[h] = (p_hist["delai"] <= h).mean()
         
         total_h = 0.0
         for _, row in f_attente.iterrows():
             key = (row["assureur"], row["fournisseur"])
-            prob = stats_croisees.get(key, stats_fourn_seul.get(row["fournisseur"], taux_glob[h]))
+            prob = stats_croisees.get(key, stats_fourn.get(row["fournisseur"], taux_glob[h]))
             total_h += row["montant"] * prob
         liq[h] = total_h
     return liq, taux_glob
@@ -41,6 +44,7 @@ if uploaded_file:
     try:
         df_brut = pd.read_excel(uploaded_file, header=0)
         df = df_brut.copy()
+        # Mapping strict selon vos index habituels
         df = df.rename(columns={
             df.columns[2]: "date_facture", df.columns[8]: "assureur",
             df.columns[9]: "fournisseur", df.columns[12]: "statut", 
@@ -61,8 +65,13 @@ if uploaded_file:
         sel_fournisseurs = st.sidebar.multiselect("Fournisseurs :", fournisseurs_dispo, default=fournisseurs_dispo)
         df = df[df["fournisseur"].isin(sel_fournisseurs)]
 
-        # --- OPTIONS & SIMULATION ---
-        st.sidebar.header("📊 3. Analyse & Simulation")
+        # --- OPTIONS STATS ---
+        st.sidebar.header("📊 3. Options d'affichage")
+        show_med = st.sidebar.checkbox("Afficher la Médiane", value=True)
+        show_std = st.sidebar.checkbox("Afficher l'Écart-type", value=True)
+
+        # --- PÉRIODES & SIMULATION ---
+        st.sidebar.header("📅 4. Analyse & Simulation")
         options_p = {"Global": None, "4 mois": 4, "2 mois": 2, "1 mois": 1}
         periods_sel = st.sidebar.multiselect("Périodes :", list(options_p.keys()), default=["Global", "4 mois"])
         date_cible = st.sidebar.date_input("Date cible :", value=datetime.today())
@@ -81,22 +90,27 @@ if uploaded_file:
         if btn_simuler:
             jours_delta = (pd.Timestamp(date_cible) - ajd).days
             if jours_delta < 0:
-                st.error("Date future requise.")
+                st.error("Veuillez choisir une date dans le futur.")
             else:
-                st.subheader(f"🔮 Simulation au {date_cible.strftime('%d.%m.%Y')} (+{jours_delta}j)")
+                st.subheader(f"🔮 Résultats de la simulation au {date_cible.strftime('%d.%m.%Y')} (+{jours_delta}j)")
                 res_sim = []
                 for p_nom in periods_sel:
                     val = options_p[p_nom]
                     limit = ajd - pd.DateOffset(months=val) if val else df["date_facture"].min()
                     p_hist = df[(df["date_paiement"].notna()) & (df["date_facture"] >= limit)].copy()
                     p_hist["delai"] = (p_hist["date_paiement"] - p_hist["date_facture"]).dt.days
+                    
                     liq, t = calculer_liquidites_fournisseur(f_att, p_hist, [jours_delta])
-                    res_sim.append({"Période": p_nom, "Estimation (CHF)": f"{round(liq[jours_delta]):,}", "Probabilité": f"{t[jours_delta]:.1%}"})
+                    res_sim.append({
+                        "Référence Historique": p_nom, 
+                        "Estimation (CHF)": f"{round(liq[jours_delta]):,}", 
+                        "Probabilité globale": f"{t[jours_delta]:.1%}"
+                    })
                 st.table(pd.DataFrame(res_sim))
 
         # LOGIQUE : ANALYSE COMPLETE
         if btn_analyser:
-            tab1, tab2, tab3 = st.tabs(["💰 Liquidités", "🕒 Délais Assureurs", "⚠️ Retards"])
+            tab1, tab2, tab3 = st.tabs(["💰 Liquidités", "🕒 Délais Assureurs", "⚠️ Analyse Retards"])
             
             for p_nom in periods_sel:
                 val = options_p[p_nom]
@@ -106,31 +120,47 @@ if uploaded_file:
                 
                 with tab1:
                     st.subheader(f"Période : {p_nom}")
-                    horizons = [10, 20, 30] # <--- CORRECTION ICI
+                    horizons = [10, 20, 30]
                     liq, t = calculer_liquidites_fournisseur(f_att, p_hist, horizons)
                     st.table(pd.DataFrame({
-                        "Horizon": [f"Sous {h}j" for h in horizons],
+                        "Horizon": [f"Sous {h} jours" for h in horizons],
                         "Estimation (CHF)": [f"{round(liq[h]):,}" for h in horizons],
-                        "Confiance": [f"{t[h]:.1%}" for h in horizons]
+                        "Confiance (Taux)": [f"{t[h]:.1%}" for h in horizons]
                     }))
 
                 with tab2:
-                    st.subheader(f"Délais par assureur ({p_nom})")
+                    st.subheader(f"Délais de paiement ({p_nom})")
                     if not p_hist.empty:
-                        stats = p_hist.groupby("assureur")["delai"].agg(['mean', 'median']).reset_index()
-                        stats.columns = ["Assureur", "Moyenne (j)", "Médiane (j)"]
-                        st.dataframe(stats.sort_values("Moyenne (j)", ascending=False), use_container_width=True)
+                        stats = p_hist.groupby("assureur")["delai"].agg(['mean', 'median', 'std']).reset_index()
+                        stats.columns = ["Assureur", "Moyenne (j)", "Médiane (j)", "Écart-type (j)"]
+                        
+                        cols_view = ["Assureur", "Moyenne (j)"]
+                        if show_med: cols_view.append("Médiane (j)")
+                        if show_std: cols_view.append("Écart-type (j)")
+                        
+                        st.dataframe(stats[cols_view].sort_values("Moyenne (j)", ascending=False), use_container_width=True)
+                    else:
+                        st.warning(f"Aucun historique pour la période {p_nom}")
 
                 with tab3:
-                    st.subheader(f"Factures > 30j ({p_nom})")
+                    st.subheader(f"Factures en retard > 30j ({p_nom})")
                     df_att_30 = f_att[f_att["delai_actuel"] > 30].copy()
+                    
                     if not df_att_30.empty:
-                        st.warning(f"Total à relancer : {df_att_30['montant'].sum():,.2f} CHF")
+                        # Analyse par assureur pour les retards
+                        total_assur = df[df["date_facture"] >= limit].groupby("assureur").size().reset_index(name="Total")
+                        ret_assur = df_att_30.groupby("assureur").size().reset_index(name="En Retard")
+                        merged = pd.merge(ret_assur, total_assur, on="assureur", how="right").fillna(0)
+                        merged["% de Retard"] = (merged["En Retard"] / merged["Total"] * 100).round(1)
+                        
+                        st.write(f"Nombre total de factures en retard : **{len(df_att_30)}**")
+                        st.dataframe(merged.sort_values("% de Retard", ascending=False), use_container_width=True)
+                        st.write("**Détail des factures critiques :**")
                         st.dataframe(df_att_30[["date_facture", "assureur", "fournisseur", "montant", "delai_actuel"]].sort_values("delai_actuel", ascending=False))
                     else:
-                        st.success("Aucun retard critique sur cette sélection.")
+                        st.success("Félicitations, aucune facture n'a plus de 30 jours de retard sur cette sélection.")
 
     except Exception as e:
-        st.error(f"Erreur : {e}")
+        st.error(f"Erreur d'analyse : {e}")
 else:
-    st.info("👋 Veuillez charger votre fichier Excel pour démarrer.")
+    st.info("👋 Veuillez charger votre export Excel pour démarrer l'analyse.")
