@@ -45,9 +45,16 @@ if uploaded_file:
     try:
         df_brut = pd.read_excel(uploaded_file, header=0)
         
+        # --- FILTRES (SIDEBAR) ---
         st.sidebar.header("🔍 2. Filtres")
+        
+        # Filtre Fournisseurs (Colonne J / Index 9)
         fournisseurs = df_brut.iloc[:, 9].dropna().unique().tolist()
-        selection = st.sidebar.multiselect("Sélectionner les fournisseurs :", options=sorted(fournisseurs), default=fournisseurs)
+        sel_fournisseurs = st.sidebar.multiselect("Fournisseurs :", options=sorted(fournisseurs), default=fournisseurs)
+        
+        # Filtre Lois (Colonne E / Index 4)
+        lois = df_brut.iloc[:, 4].dropna().unique().tolist()
+        sel_lois = st.sidebar.multiselect("Types de Loi :", options=sorted(lois), default=lois)
         
         st.sidebar.header("📊 3. Options Délais")
         show_med = st.sidebar.checkbox("Afficher la Médiane", value=True)
@@ -63,13 +70,23 @@ if uploaded_file:
             st.session_state.analyse_lancee = True
         btn_simuler = col_b2.button("🔮 Simuler", use_container_width=True)
 
-        # --- NETTOYAGE ---
-        df = df_brut[df_brut.iloc[:, 9].isin(selection)].copy()
+        # --- NETTOYAGE ET APPLICATION FILTRES ---
+        # Application des filtres Fournisseurs ET Lois
+        df = df_brut[
+            (df_brut.iloc[:, 9].isin(sel_fournisseurs)) & 
+            (df_brut.iloc[:, 4].isin(sel_lois))
+        ].copy()
+
         df = df.rename(columns={
-            df.columns[2]: "date_facture", df.columns[8]: "assureur",
-            df.columns[9]: "fournisseur", df.columns[12]: "statut", 
-            df.columns[13]: "montant", df.columns[15]: "date_paiement"
+            df.columns[2]: "date_facture", 
+            df.columns[4]: "loi",
+            df.columns[8]: "assureur",
+            df.columns[9]: "fournisseur", 
+            df.columns[12]: "statut", 
+            df.columns[13]: "montant", 
+            df.columns[15]: "date_paiement"
         })
+        
         df["date_facture"] = df["date_facture"].apply(convertir_date)
         df["date_paiement"] = df["date_paiement"].apply(convertir_date)
         df = df[df["date_facture"].notna()].copy()
@@ -147,12 +164,11 @@ if uploaded_file:
 
             with tab4:
                 st.subheader("📈 Évolution du délai de remboursement")
-                # Ordre chronologique strict
                 ordre_chrono = ["Global", "6 mois", "4 mois", "3 mois", "2 mois"]
                 periodes_graph = {"Global": None, "6 mois": 6, "4 mois": 4, "3 mois": 3, "2 mois": 2}
                 evol_data = []
                 
-                # Top 5 par volume global
+                # Top 5 volume
                 p_hist_global = df[df["date_paiement"].notna()].copy()
                 top_assurances = p_hist_global.groupby("assureur").size().sort_values(ascending=False).head(5).index.tolist()
 
@@ -167,7 +183,6 @@ if uploaded_file:
                 
                 if evol_data:
                     df_ev = pd.concat(evol_data)
-                    # Pivot et tri des colonnes selon l'ordre chrono
                     df_pv = df_ev.pivot(index="assureur", columns="Période", values="delai")
                     cols_presentes = [c for c in ordre_chrono if c in df_pv.columns]
                     df_pv = df_pv[cols_presentes]
@@ -177,15 +192,11 @@ if uploaded_file:
                                                default=[a for a in top_assurances if a in df_pv.index])
                     
                     if assur_sel:
-                        # --- CORRECTION GRAPHIQUE ---
-                        # On transpose pour avoir la Période en index
                         df_plot = df_pv.loc[assur_sel].T
-                        # On force l'index en type catégoriel avec l'ordre voulu
                         df_plot.index = pd.CategoricalIndex(df_plot.index, categories=ordre_chrono, ordered=True)
                         df_plot = df_plot.sort_index()
                         
                         st.line_chart(df_plot)
-                        
                         st.write("**Détails par période (en jours) :**")
                         st.caption("🔴 Rouge : Délai max (lent) | 🟢 Vert : Délai min (rapide) pour l'assureur.")
                         st.dataframe(df_pv.loc[assur_sel].style.highlight_max(axis=1, color='#ff9999').highlight_min(axis=1, color='#99ff99'))
