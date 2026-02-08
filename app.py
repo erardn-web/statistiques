@@ -57,7 +57,7 @@ if uploaded_file:
         # --- PÉRIODES & SIMULATION ---
         st.sidebar.header("📅 4. Périodes & Simulation")
         options_p = {"Global": None, "6 mois": 6, "4 mois": 4, "3 mois": 3, "2 mois": 2, "1 mois": 1}
-        periods_sel = st.sidebar.multiselect("Analyser les périodes :", list(options_p.keys()), default=["Global", "4 mois"])
+        periods_sel = st.sidebar.multiselect("Analyser les périodes :", list(options_p.keys()), default=["Global", "4 mois", "2 mois"])
         date_cible = st.sidebar.date_input("Date cible (simulation) :", value=datetime.today())
         
         col_b1, col_b2 = st.sidebar.columns(2)
@@ -86,7 +86,6 @@ if uploaded_file:
         st.metric("💰 TOTAL BRUT EN ATTENTE", f"{f_att['montant'].sum():,.2f} CHF")
         st.markdown("---")
 
-        # LOGIQUE : SIMULATION
         if btn_simuler:
             jours_delta = (pd.Timestamp(date_cible) - ajd).days
             if jours_delta < 0:
@@ -103,26 +102,24 @@ if uploaded_file:
                     res_sim.append({"Période": p_nom, "Estimation (CHF)": f"{round(liq[jours_delta]):,}", "Probabilité": f"{t[jours_delta]:.1%}"})
                 st.table(pd.DataFrame(res_sim))
 
-        # LOGIQUE : ANALYSE
         if btn_analyser:
-            tab1, tab2, tab3 = st.tabs(["💰 Liquidités", "🕒 Délais", "⚠️ Retards"])
+            tab1, tab2, tab3, tab4 = st.tabs(["💰 Liquidités", "🕒 Délais", "⚠️ Retards", "📈 Évolution"])
 
             for p_name in periods_sel:
                 val = options_p[p_name]
-                limit = ajd - pd.DateOffset(months=val) if val else df["date_facture"].min()
-                df_p = df[df["date_facture"] >= limit]
-                
+                limit_p = ajd - pd.DateOffset(months=val) if val else df["date_facture"].min()
+                df_p = df[df["date_facture"] >= limit_p]
                 p_hist = df_p[df_p["date_paiement"].notna()].copy()
                 p_hist["delai"] = (p_hist["date_paiement"] - p_hist["date_facture"]).dt.days
                 
                 with tab1:
                     st.subheader(f"Période : {p_name}")
-                    horizons_std = [10, 20, 30]
-                    liq, t = calculer_liquidites_fournisseur(f_att, p_hist, horizons_std)
+                    horizons = [10, 20, 30]
+                    liq, t = calculer_liquidites_fournisseur(f_att, p_hist, horizons)
                     st.table(pd.DataFrame({
-                        "Horizon": [f"Sous {h}j" for h in horizons_std],
-                        "Estimation (CHF)": [f"{round(liq[h]):,}" for h in horizons_std],
-                        "Probabilité": [f"{round(t[h]*100)}%" for h in horizons_std]
+                        "Horizon": [f"Sous {h}j" for h in horizons],
+                        "Estimation (CHF)": [f"{round(liq[h]):,}" for h in horizons],
+                        "Probabilité": [f"{round(t[h]*100)}%" for h in horizons]
                     }))
 
                 with tab2:
@@ -140,19 +137,35 @@ if uploaded_file:
                     df_att_30 = f_att[f_att["delai_actuel"] > 30].copy()
                     df_pay_30 = p_hist[p_hist["delai"] > 30].copy()
                     plus_30 = pd.concat([df_pay_30, df_att_30])
-                    
                     total_vol = df_p.groupby("assureur").size().reset_index(name="Volume Total")
                     ret_assur = plus_30.groupby("assureur").size().reset_index(name="Nb Retards")
-                    
                     merged = pd.merge(ret_assur, total_vol, on="assureur", how="right").fillna(0)
                     merged["Nb Retards"] = merged["Nb Retards"].astype(int)
                     merged["% Retard"] = (merged["Nb Retards"] / merged["Volume Total"] * 100).round(1)
-                    
-                    st.write(f"Total des factures en retard (Historique + Actuel) : **{int(merged['Nb Retards'].sum())}**")
-                    st.dataframe(
-                        merged[["assureur", "Nb Retards", "Volume Total", "% Retard"]].sort_values("% Retard", ascending=False), 
-                        use_container_width=True
-                    )
+                    st.write(f"Total des factures en retard : **{int(merged['Nb Retards'].sum())}**")
+                    st.dataframe(merged[["assureur", "Nb Retards", "Volume Total", "% Retard"]].sort_values("% Retard", ascending=False), use_container_width=True)
+
+            with tab4:
+                st.subheader("📈 Évolution du délai de remboursement")
+                periodes_graph = {"Global": None, "6 mois": 6, "4 mois": 4, "3 mois": 3, "2 mois": 2}
+                evol_data = []
+                for n, v in periodes_graph.items():
+                    lim = ajd - pd.DateOffset(months=v) if v else df["date_facture"].min()
+                    h_tmp = df[(df["date_paiement"].notna()) & (df["date_facture"] >= lim)].copy()
+                    h_tmp["delai"] = (h_tmp["date_paiement"] - h_tmp["date_facture"]).dt.days
+                    if not h_tmp.empty:
+                        m = h_tmp.groupby("assureur")["delai"].mean().reset_index()
+                        m["Période"] = n
+                        evol_data.append(m)
+                if evol_data:
+                    df_ev = pd.concat(evol_data)
+                    df_pv = df_ev.pivot(index="assureur", columns="Période", values="delai")
+                    cols_ordre = [c for c in ["Global", "6 mois", "4 mois", "3 mois", "2 mois"] if c in df_pv.columns]
+                    df_pv = df_pv[cols_ordre]
+                    assur_sel = st.multiselect("Assureurs à comparer :", options=df_pv.index.tolist(), default=df_pv.index.tolist()[:5])
+                    if assur_sel:
+                        st.line_chart(df_pv.loc[assur_sel].T)
+                        st.dataframe(df_pv.loc[assur_sel].style.highlight_max(axis=1, color='#ff9999').highlight_min(axis=1, color='#99ff99'))
 
     except Exception as e:
         st.error(f"Erreur : {e}")
