@@ -5,6 +5,10 @@ from datetime import datetime
 # --- CONFIGURATION PAGE WEB ---
 st.set_page_config(page_title="Analyseur de Facturation Pro", layout="wide", page_icon="🏥")
 
+# --- INITIALISATION DE L'ÉTAT (Session State) ---
+if 'analyse_lancee' not in st.session_state:
+    st.session_state.analyse_lancee = False
+
 # --- LOGIQUE DE CALCUL ---
 def convertir_date(val):
     if pd.isna(val) or str(val).strip() == "": return pd.NaT
@@ -15,7 +19,6 @@ def convertir_date(val):
         return pd.NaT
 
 def calculer_liquidites_fournisseur(f_attente, p_hist, jours_horizons):
-    """Estimation précise par Assureur ET Fournisseur"""
     liq = {h: 0.0 for h in jours_horizons}
     taux_glob = {h: 0.0 for h in jours_horizons}
     if p_hist.empty: return liq, taux_glob
@@ -44,34 +47,32 @@ if uploaded_file:
     try:
         df_brut = pd.read_excel(uploaded_file, header=0)
         
-        # --- FILTRES ---
         st.sidebar.header("🔍 2. Filtres")
         fournisseurs = df_brut.iloc[:, 9].dropna().unique().tolist()
         selection = st.sidebar.multiselect("Sélectionner les fournisseurs :", options=sorted(fournisseurs), default=fournisseurs)
         
-        # --- OPTIONS STATS ---
         st.sidebar.header("📊 3. Options Délais")
         show_med = st.sidebar.checkbox("Afficher la Médiane", value=True)
         show_std = st.sidebar.checkbox("Afficher l'Écart-type", value=True)
         
-        # --- PÉRIODES & SIMULATION ---
         st.sidebar.header("📅 4. Périodes & Simulation")
         options_p = {"Global": None, "6 mois": 6, "4 mois": 4, "3 mois": 3, "2 mois": 2, "1 mois": 1}
-        periods_sel = st.sidebar.multiselect("Analyser les périodes :", list(options_p.keys()), default=["Global", "4 mois", "2 mois"])
+        periods_sel = st.sidebar.multiselect("Analyser les périodes :", list(options_p.keys()), default=["Global", "4 mois"])
         date_cible = st.sidebar.date_input("Date cible (simulation) :", value=datetime.today())
         
         col_b1, col_b2 = st.sidebar.columns(2)
-        btn_analyser = col_b1.button("🚀 Analyser", type="primary", use_container_width=True)
+        if col_b1.button("🚀 Analyser", type="primary", use_container_width=True):
+            st.session_state.analyse_lancee = True
+        
         btn_simuler = col_b2.button("🔮 Simuler", use_container_width=True)
 
         # --- NETTOYAGE ---
         df = df_brut[df_brut.iloc[:, 9].isin(selection)].copy()
         df = df.rename(columns={
-            df.columns[2]: "date_facture", df.columns[8]: "assureur",
-            df.columns[9]: "fournisseur", df.columns[12]: "statut", 
-            df.columns[13]: "montant", df.columns[15]: "date_paiement"
+            df.columns: "date_facture", df.columns: "assureur",
+            df.columns: "fournisseur", df.columns: "statut", 
+            df.columns: "montant", df.columns: "date_paiement"
         })
-        
         df["date_facture"] = df["date_facture"].apply(convertir_date)
         df["date_paiement"] = df["date_paiement"].apply(convertir_date)
         df = df[df["date_facture"].notna()].copy()
@@ -102,7 +103,8 @@ if uploaded_file:
                     res_sim.append({"Période": p_nom, "Estimation (CHF)": f"{round(liq[jours_delta]):,}", "Probabilité": f"{t[jours_delta]:.1%}"})
                 st.table(pd.DataFrame(res_sim))
 
-        if btn_analyser:
+        # --- UTILISATION DE L'ÉTAT POUR L'ANALYSE ---
+        if st.session_state.analyse_lancee:
             tab1, tab2, tab3, tab4 = st.tabs(["💰 Liquidités", "🕒 Délais", "⚠️ Retards", "📈 Évolution"])
 
             for p_name in periods_sel:
@@ -142,7 +144,6 @@ if uploaded_file:
                     merged = pd.merge(ret_assur, total_vol, on="assureur", how="right").fillna(0)
                     merged["Nb Retards"] = merged["Nb Retards"].astype(int)
                     merged["% Retard"] = (merged["Nb Retards"] / merged["Volume Total"] * 100).round(1)
-                    st.write(f"Total des factures en retard : **{int(merged['Nb Retards'].sum())}**")
                     st.dataframe(merged[["assureur", "Nb Retards", "Volume Total", "% Retard"]].sort_values("% Retard", ascending=False), use_container_width=True)
 
             with tab4:
@@ -162,6 +163,8 @@ if uploaded_file:
                     df_pv = df_ev.pivot(index="assureur", columns="Période", values="delai")
                     cols_ordre = [c for c in ["Global", "6 mois", "4 mois", "3 mois", "2 mois"] if c in df_pv.columns]
                     df_pv = df_pv[cols_ordre]
+                    
+                    # Le multiselect ici ne fera plus sauter l'analyse
                     assur_sel = st.multiselect("Assureurs à comparer :", options=df_pv.index.tolist(), default=df_pv.index.tolist()[:5])
                     if assur_sel:
                         st.line_chart(df_pv.loc[assur_sel].T)
