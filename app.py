@@ -5,7 +5,7 @@ from datetime import datetime
 # --- CONFIGURATION PAGE WEB ---
 st.set_page_config(page_title="Analyseur de Facturation Pro", layout="wide", page_icon="🏥")
 
-# --- INITIALISATION DE L'ÉTAT (Session State) ---
+# --- INITIALISATION DE L'ÉTAT ---
 if 'analyse_lancee' not in st.session_state:
     st.session_state.analyse_lancee = False
 
@@ -22,12 +22,10 @@ def calculer_liquidites_fournisseur(f_attente, p_hist, jours_horizons):
     liq = {h: 0.0 for h in jours_horizons}
     taux_glob = {h: 0.0 for h in jours_horizons}
     if p_hist.empty: return liq, taux_glob
-    
     for h in jours_horizons:
         stats_croisees = p_hist.groupby(["assureur", "fournisseur"])["delai"].apply(lambda x: (x <= h).mean()).to_dict()
         stats_fourn = p_hist.groupby("fournisseur")["delai"].apply(lambda x: (x <= h).mean()).to_dict()
         taux_glob[h] = (p_hist["delai"] <= h).mean()
-        
         total_h = 0.0
         for _, row in f_attente.iterrows():
             key = (row["assureur"], row["fournisseur"])
@@ -36,7 +34,7 @@ def calculer_liquidites_fournisseur(f_attente, p_hist, jours_horizons):
         liq[h] = total_h
     return liq, taux_glob
 
-# --- INTERFACE STREAMLIT ---
+# --- INTERFACE ---
 st.title("🏥 Analyseur de Facturation Suisse")
 st.markdown("---")
 
@@ -63,18 +61,14 @@ if uploaded_file:
         col_b1, col_b2 = st.sidebar.columns(2)
         if col_b1.button("🚀 Analyser", type="primary", use_container_width=True):
             st.session_state.analyse_lancee = True
-        
         btn_simuler = col_b2.button("🔮 Simuler", use_container_width=True)
 
         # --- NETTOYAGE ---
         df = df_brut[df_brut.iloc[:, 9].isin(selection)].copy()
         df = df.rename(columns={
-            df.columns[2]: "date_facture", 
-            df.columns[8]: "assureur",
-            df.columns[9]: "fournisseur", 
-            df.columns[12]: "statut", 
-            df.columns[13]: "montant", 
-            df.columns[15]: "date_paiement"
+            df.columns[2]: "date_facture", df.columns[8]: "assureur",
+            df.columns[9]: "fournisseur", df.columns[12]: "statut", 
+            df.columns[13]: "montant", df.columns[15]: "date_paiement"
         })
         df["date_facture"] = df["date_facture"].apply(convertir_date)
         df["date_paiement"] = df["date_paiement"].apply(convertir_date)
@@ -106,7 +100,6 @@ if uploaded_file:
                     res_sim.append({"Période": p_nom, "Estimation (CHF)": f"{round(liq[jours_delta]):,}", "Probabilité": f"{t[jours_delta]:.1%}"})
                 st.table(pd.DataFrame(res_sim))
 
-        # --- AFFICHAGE DES ONGLETS ---
         if st.session_state.analyse_lancee:
             tab1, tab2, tab3, tab4 = st.tabs(["💰 Liquidités", "🕒 Délais", "⚠️ Retards", "📈 Évolution"])
 
@@ -149,15 +142,17 @@ if uploaded_file:
                     merged["Nb Retards"] = merged["Nb Retards"].astype(int)
                     merged["% Retard"] = (merged["Nb Retards"] / merged["Volume Total"] * 100).round(1)
                     
-                    st.write(f"Nombre de factures en retard sur cette période : **{int(merged['Nb Retards'].sum())}**")
+                    st.metric(f"Total Retards ({p_name})", f"{int(merged['Nb Retards'].sum())} factures")
                     st.dataframe(merged[["assureur", "Nb Retards", "Volume Total", "% Retard"]].sort_values("% Retard", ascending=False), use_container_width=True)
 
             with tab4:
                 st.subheader("📈 Évolution du délai de remboursement")
+                # Ordre chronologique strict
+                ordre_chrono = ["Global", "6 mois", "4 mois", "3 mois", "2 mois"]
                 periodes_graph = {"Global": None, "6 mois": 6, "4 mois": 4, "3 mois": 3, "2 mois": 2}
                 evol_data = []
                 
-                # Calcul pour la pré-sélection (Volume Global)
+                # Top 5 par volume global
                 p_hist_global = df[df["date_paiement"].notna()].copy()
                 top_assurances = p_hist_global.groupby("assureur").size().sort_values(ascending=False).head(5).index.tolist()
 
@@ -172,20 +167,27 @@ if uploaded_file:
                 
                 if evol_data:
                     df_ev = pd.concat(evol_data)
+                    # Pivot et tri des colonnes selon l'ordre chrono
                     df_pv = df_ev.pivot(index="assureur", columns="Période", values="delai")
+                    cols_presentes = [c for c in ordre_chrono if c in df_pv.columns]
+                    df_pv = df_pv[cols_presentes]
                     
-                    # Ordre chronologique demandé : Global à gauche, 2 mois à droite
-                    cols_ordre = [c for c in ["Global", "6 mois", "4 mois", "3 mois", "2 mois"] if c in df_pv.columns]
-                    df_pv = df_pv[cols_ordre]
-                    
-                    assur_sel = st.multiselect("Sélectionner les assureurs (Top 5 par volume pré-sélectionnés) :", 
+                    assur_sel = st.multiselect("Sélectionner les assureurs (Top 5 volume pré-sélectionnés) :", 
                                                options=df_pv.index.tolist(), 
                                                default=[a for a in top_assurances if a in df_pv.index])
                     
                     if assur_sel:
-                        st.line_chart(df_pv.loc[assur_sel].T)
-                        st.write("**Légende des couleurs du tableau :**")
-                        st.caption("🔴 Rouge : Délai maximum (plus lent) | 🟢 Vert : Délai minimum (plus rapide) pour chaque assureur.")
+                        # --- CORRECTION GRAPHIQUE ---
+                        # On transpose pour avoir la Période en index
+                        df_plot = df_pv.loc[assur_sel].T
+                        # On force l'index en type catégoriel avec l'ordre voulu
+                        df_plot.index = pd.CategoricalIndex(df_plot.index, categories=ordre_chrono, ordered=True)
+                        df_plot = df_plot.sort_index()
+                        
+                        st.line_chart(df_plot)
+                        
+                        st.write("**Détails par période (en jours) :**")
+                        st.caption("🔴 Rouge : Délai max (lent) | 🟢 Vert : Délai min (rapide) pour l'assureur.")
                         st.dataframe(df_pv.loc[assur_sel].style.highlight_max(axis=1, color='#ff9999').highlight_min(axis=1, color='#99ff99'))
 
     except Exception as e:
