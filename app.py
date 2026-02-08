@@ -5,132 +5,140 @@ from datetime import datetime
 # --- CONFIGURATION PAGE ---
 st.set_page_config(page_title="Analyseur de Facturation Pro", layout="wide", page_icon="🏥")
 
-# --- LOGIQUE DE CALCUL ---
-def convertir_date(val):
-    if pd.isna(val) or str(val).strip() == "": return pd.NaT
-    if isinstance(val, pd.Timestamp): return val
-    try:
-        return pd.to_datetime(str(val).strip(), format="%d.%m.%Y", errors="coerce")
-    except:
-        return pd.NaT
+# --- LOGIQUE DE CALCUL PAR FOURNISSEUR ---
 
-def calculer_liquidites_precision(f_attente, p_hist, jours_horizons):
-    """Calcule l'estimation pour un ou plusieurs horizons donnés"""
+def calculer_liquidites_fournisseur(f_attente, p_hist, jours_horizons):
+    """
+    Calcule l'estimation en croisant l'Assureur ET le Fournisseur.
+    Cela permet de capturer les variations de délais entre métiers.
+    """
     liq = {h: 0.0 for h in jours_horizons}
     taux_glob = {h: 0.0 for h in jours_horizons}
     
     if p_hist.empty: return liq, taux_glob
     
     for h in jours_horizons:
-        taux_glob[h] = (p_hist["delai"] <= h).mean()
-        taux_par_assur = p_hist.groupby("assureur")["delai"].apply(lambda x: (x <= h).mean())
+        # 1. Taux par couple (Assureur, Fournisseur)
+        stats_croisees = p_hist.groupby(["assureur", "fournisseur"])["delai"].apply(lambda x: (x <= h).mean()).to_dict()
         
-        f_temp = f_attente.copy()
-        f_temp["prob"] = f_temp["assureur"].map(taux_par_assur).fillna(taux_glob[h])
-        liq[h] = (f_temp["montant"] * f_temp["prob"]).sum()
+        # 2. Taux par Fournisseur uniquement (si l'assureur est nouveau pour ce fournisseur)
+        stats_fournisseur_seul = p_hist.groupby("fournisseur")["delai"].apply(lambda x: (x <= h).mean()).to_dict()
+        
+        # 3. Taux de secours global
+        taux_glob[h] = (p_hist["delai"] <= h).mean()
+        
+        total_h = 0.0
+        for _, row in f_attente.iterrows():
+            key = (row["assureur"], row["fournisseur"])
+            # Cascade de probabilité : Couple (Assur/Fourn) -> Fournisseur seul -> Global
+            prob = stats_croisees.get(key, stats_fournisseur_seul.get(row["fournisseur"], taux_glob[h]))
+            total_h += row["montant"] * prob
+            
+        liq[h] = total_h
         
     return liq, taux_glob
 
 # --- INTERFACE ---
-st.title("🏥 Analyseur de Facturation Suisse")
-st.markdown("---")
-
 st.sidebar.header("📁 1. Importation")
-uploaded_file = st.sidebar.file_uploader("Charger le fichier Excel (.xlsx)", type="xlsx")
+uploaded_file = st.sidebar.file_uploader("Charger le fichier Excel", type="xlsx")
 
 if uploaded_file:
     try:
         df_brut = pd.read_excel(uploaded_file, header=0)
         
-        # --- FILTRES ---
-        st.sidebar.header("🔍 2. Filtres")
-        fournisseurs = df_brut.iloc[:, 9].dropna().unique().tolist()
-        selection = st.sidebar.multiselect("Fournisseurs :", options=sorted(fournisseurs), default=fournisseurs)
-        
-        # --- PÉRIODES ---
-        st.sidebar.header("📅 3. Références Temporelles")
-        options_p = {"Global": None, "6 mois": 6, "4 mois": 4, "2 mois": 2, "1 mois": 1}
-        periods_sel = st.sidebar.multiselect("Périodes à comparer :", list(options_p.keys()), default=["Global", "4 mois", "2 mois"])
-
-        # --- SIMULATION ---
-        st.sidebar.header("🎯 4. Simulation")
-        date_cible = st.sidebar.date_input("Prédire pour le :", value=datetime.today())
-        
-        # --- BOUTONS ---
-        st.sidebar.markdown("---")
-        btn_analyser = st.sidebar.button("🚀 Analyse Complète (10-20-30j)", type="primary", use_container_width=True)
-        btn_simuler = st.sidebar.button("🔮 Simuler la date cible", use_container_width=True)
-
-        # --- PRÉ-TRAITEMENT ---
-        df = df_brut[df_brut.iloc[:, 9].isin(selection)].copy()
+        # --- MAPPING SELON VOTRE STRUCTURE ---
+        df = df_brut.copy()
         df = df.rename(columns={
-            df.columns[2]: "date_facture", df.columns[8]: "assureur",
-            df.columns[12]: "statut", df.columns[13]: "montant", 
+            df.columns[2]: "date_facture", 
+            df.columns[8]: "assureur",
+            df.columns[9]: "fournisseur", 
+            df.columns[12]: "statut", 
+            df.columns[13]: "montant", 
             df.columns[15]: "date_paiement"
         })
+
+        # Nettoyage
+        for col in ["date_facture", "date_paiement"]:
+            df[col] = pd.to_datetime(df[col], dayfirst=True, errors='coerce')
         
-        df["date_facture"] = df["date_facture"].apply(convertir_date)
-        df["date_paiement"] = df["date_paiement"].apply(convertir_date)
-        df = df[df["date_facture"].notna()].copy()
         df["montant"] = pd.to_numeric(df["montant"], errors="coerce").fillna(0)
-        
-        # CORRECTION ICI : Ajout de .str avant .lower()
         df["statut"] = df["statut"].astype(str).str.lower().str.strip()
         df["assureur"] = df["assureur"].fillna("Patient")
+        df["fournisseur"] = df["fournisseur"].fillna("Inconnu")
+
+        # --- FILTRES SIDEBAR ---
+        st.sidebar.header("🔍 2. Sélection Fournisseurs")
+        fournisseurs_dispo = sorted(df["fournisseur"].unique().tolist())
+        sel_fournisseurs = st.sidebar.multiselect("Sélectionner :", fournisseurs_dispo, default=fournisseurs_dispo)
         
-        ajd = pd.Timestamp(datetime.today().date())
+        df = df[df["fournisseur"].isin(sel_fournisseurs)]
+
+        # Périodes
+        st.sidebar.header("📅 3. Analyse & Simulation")
+        options_p = {"Global": None, "4 mois": 4, "2 mois": 2}
+        periods_sel = st.sidebar.multiselect("Périodes de référence :", list(options_p.keys()), default=["Global", "4 mois"])
         
-        # Identification des factures en attente
+        date_cible = st.sidebar.date_input("Date cible (simulation) :", value=datetime.today())
+        
+        btn_analyser = st.sidebar.button("🚀 Analyse Complète", type="primary", use_container_width=True)
+        btn_simuler = st.sidebar.button("🔮 Simuler la date cible", use_container_width=True)
+
+        # Identification Attente
+        ajd = pd.Timestamp.now().normalize()
         f_att = df[df["statut"].str.contains("en attente") & ~df["statut"].str.contains("annulé")].copy()
         
-        total_brut = f_att["montant"].sum()
-        st.metric(label="💰 TOTAL BRUT EN ATTENTE", value=f"{total_brut:,.2f} CHF")
+        # --- AFFICHAGE HEADER ---
+        st.metric("💰 TOTAL BRUT EN ATTENTE", f"{f_att['montant'].sum():,.2f} CHF")
+        st.markdown("---")
 
-        # --- LOGIQUE : SIMULATION MULTI-PÉRIODES ---
+        # LOGIQUE : SIMULATION
         if btn_simuler:
             jours_delta = (pd.Timestamp(date_cible) - ajd).days
             if jours_delta < 0:
-                st.error("La date cible doit être dans le futur.")
+                st.error("Choisissez une date futur.")
             else:
-                st.subheader(f"🔮 Simulation d'encaissement au {date_cible.strftime('%d.%m.%Y')} (+{jours_delta} jours)")
-                
-                sim_results = []
-                for p_name in periods_sel:
-                    val = options_p[p_name]
+                st.subheader(f"🔮 Simulation au {date_cible.strftime('%d.%m.%Y')} (+{jours_delta}j)")
+                res_sim = []
+                for p_nom in periods_sel:
+                    val = options_p[p_nom]
                     limit = ajd - pd.DateOffset(months=val) if val else df["date_facture"].min()
                     p_hist = df[(df["date_paiement"].notna()) & (df["date_facture"] >= limit)].copy()
                     p_hist["delai"] = (p_hist["date_paiement"] - p_hist["date_facture"]).dt.days
                     
-                    liq, t = calculer_liquidites_precision(f_att, p_hist, [jours_delta])
-                    sim_results.append({
-                        "Référence Historique": p_name,
-                        "Estimation (CHF)": f"{round(liq[jours_delta]):,}",
-                        "Probabilité de paiement": f"{round(t[jours_delta]*100)}%"
-                    })
+                    liq, t = calculer_liquidites_fournisseur(f_att, p_hist, [jours_delta])
+                    res_sim.append({"Référence": p_nom, "Estimation (CHF)": f"{round(liq[jours_delta]):,}", "Probabilité": f"{t[jours_delta]:.1%}"})
                 
-                st.table(pd.DataFrame(sim_results))
+                st.table(pd.DataFrame(res_sim))
 
-        # --- LOGIQUE : ANALYSE ---
+        # LOGIQUE : ANALYSE
         if btn_analyser:
-            tab1, tab2 = st.tabs(["💰 Liquidités Estimées", "🕒 Délais Assureurs"])
+            tab1, tab2 = st.tabs(["💰 Cash-Flow Estimé", "🕒 Performance par Fournisseur"])
+            
             with tab1:
-                for p_name in periods_sel:
-                    val = options_p[p_name]
+                for p_nom in periods_sel:
+                    val = options_p[p_nom]
                     limit = ajd - pd.DateOffset(months=val) if val else df["date_facture"].min()
                     p_hist = df[(df["date_paiement"].notna()) & (df["date_facture"] >= limit)].copy()
                     p_hist["delai"] = (p_hist["date_paiement"] - p_hist["date_facture"]).dt.days
                     
-                    liq, t = calculer_liquidites_precision(f_att, p_hist, [10, 20, 30])
-                    
-                    st.write(f"**Période : {p_name}**")
-                    data = {
+                    liq, t = calculer_liquidites_fournisseur(f_att, p_hist,)
+                    st.write(f"**Période : {p_nom}**")
+                    st.table(pd.DataFrame({
                         "Horizon": ["10 jours", "20 jours", "30 jours"],
-                        "Estimation (CHF)": [f"{round(liq[10]):,}", f"{round(liq[20]):,}", f"{round(liq[30]):,}"],
-                        "Confiance": [f"{round(t[10]*100)}%", f"{round(t[20]*100)}%", f"{round(t[30]*100)}%"]
-                    }
-                    st.table(pd.DataFrame(data))
+                        "Estimation (CHF)": [f"{round(v):,}" for v in liq.values()],
+                        "Probabilité globale": [f"{v:.1%}" for v in t.values()]
+                    }))
+            
+            with tab2:
+                st.subheader("Délai de paiement moyen par fournisseur")
+                p_hist_all = df[df["date_paiement"].notna()].copy()
+                p_hist_all["delai"] = (p_hist_all["date_paiement"] - p_hist_all["date_facture"]).dt.days
+                if not p_hist_all.empty:
+                    stats_f = p_hist_all.groupby("fournisseur")["delai"].mean().sort_values()
+                    st.bar_chart(stats_f)
+                    st.dataframe(stats_f.rename("Délai Moyen (jours)"))
 
     except Exception as e:
-        st.error(f"Erreur : {e}")
+        st.error(f"Erreur d'analyse : {e}")
 else:
-    st.info("👋 Chargez votre export Excel pour démarrer.")
+    st.info("👋 Chargez votre fichier Excel pour analyser les délais par fournisseur.")
