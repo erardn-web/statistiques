@@ -56,7 +56,7 @@ if uploaded_file:
         
         # --- PÉRIODES & SIMULATION ---
         st.sidebar.header("📅 4. Périodes & Simulation")
-        options_p = {"Global": None, "6 mois": 6, "4 mois": 4, "2 mois": 2, "1 mois": 1}
+        options_p = {"Global": None, "6 mois": 6, "4 mois": 4, "3 mois": 3, "2 mois": 2, "1 mois": 1}
         periods_sel = st.sidebar.multiselect("Analyser les périodes :", list(options_p.keys()), default=["Global", "4 mois"])
         date_cible = st.sidebar.date_input("Date cible (simulation) :", value=datetime.today())
         
@@ -117,12 +117,12 @@ if uploaded_file:
                 
                 with tab1:
                     st.subheader(f"Période : {p_name}")
-                    horizons = 
-                    liq, t = calculer_liquidites_fournisseur(f_att, p_hist, horizons)
+                    horizons_std = [10, 20, 30]
+                    liq, t = calculer_liquidites_fournisseur(f_att, p_hist, horizons_std)
                     st.table(pd.DataFrame({
-                        "Horizon": [f"Sous {h}j" for h in horizons],
-                        "Estimation (CHF)": [f"{round(liq[h]):,}" for h in horizons],
-                        "Probabilité": [f"{round(t[h]*100)}%" for h in horizons]
+                        "Horizon": [f"Sous {h}j" for h in horizons_std],
+                        "Estimation (CHF)": [f"{round(liq[h]):,}" for h in horizons_std],
+                        "Probabilité": [f"{round(t[h]*100)}%" for h in horizons_std]
                     }))
 
                 with tab2:
@@ -141,21 +141,16 @@ if uploaded_file:
                     df_pay_30 = p_hist[p_hist["delai"] > 30].copy()
                     plus_30 = pd.concat([df_pay_30, df_att_30])
                     
-                    # Groupement par assureur
-                    # nb_retard = nombre de factures ayant mis ou mettant + de 30j
-                    # total_vol = nombre total de factures émises sur la période
                     total_vol = df_p.groupby("assureur").size().reset_index(name="Volume Total")
                     ret_assur = plus_30.groupby("assureur").size().reset_index(name="Nb Retards")
                     
                     merged = pd.merge(ret_assur, total_vol, on="assureur", how="right").fillna(0)
+                    merged["Nb Retards"] = merged["Nb Retards"].astype(int)
                     merged["% Retard"] = (merged["Nb Retards"] / merged["Volume Total"] * 100).round(1)
                     
-                    # On renomme pour la clarté dans le tableau
-                    merged = merged.rename(columns={"assureur": "Assureur"})
-                    
-                    st.write(f"Total des factures en retard sur la période : **{int(merged['Nb Retards'].sum())}**")
+                    st.write(f"Total des factures en retard (Historique + Actuel) : **{int(merged['Nb Retards'].sum())}**")
                     st.dataframe(
-                        merged[["Assureur", "Nb Retards", "Volume Total", "% Retard"]].sort_values("% Retard", ascending=False), 
+                        merged[["assureur", "Nb Retards", "Volume Total", "% Retard"]].sort_values("% Retard", ascending=False), 
                         use_container_width=True
                     )
 
