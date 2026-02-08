@@ -66,13 +66,19 @@ if uploaded_file:
         
         btn_simuler = col_b2.button("🔮 Simuler", use_container_width=True)
 
-        # --- NETTOYAGE ---
+        # --- NETTOYAGE (Correction du Mapping) ---
         df = df_brut[df_brut.iloc[:, 9].isin(selection)].copy()
+        
+        # On utilise les positions exactes de vos colonnes (2, 8, 9, 12, 13, 15)
         df = df.rename(columns={
-            df.columns: "date_facture", df.columns: "assureur",
-            df.columns: "fournisseur", df.columns: "statut", 
-            df.columns: "montant", df.columns: "date_paiement"
+            df.columns[2]: "date_facture", 
+            df.columns[8]: "assureur",
+            df.columns[9]: "fournisseur", 
+            df.columns[12]: "statut", 
+            df.columns[13]: "montant", 
+            df.columns[15]: "date_paiement"
         })
+        
         df["date_facture"] = df["date_facture"].apply(convertir_date)
         df["date_paiement"] = df["date_paiement"].apply(convertir_date)
         df = df[df["date_facture"].notna()].copy()
@@ -103,7 +109,7 @@ if uploaded_file:
                     res_sim.append({"Période": p_nom, "Estimation (CHF)": f"{round(liq[jours_delta]):,}", "Probabilité": f"{t[jours_delta]:.1%}"})
                 st.table(pd.DataFrame(res_sim))
 
-        # --- UTILISATION DE L'ÉTAT POUR L'ANALYSE ---
+        # --- AFFICHAGE DES ONGLETS (Session State) ---
         if st.session_state.analyse_lancee:
             tab1, tab2, tab3, tab4 = st.tabs(["💰 Liquidités", "🕒 Délais", "⚠️ Retards", "📈 Évolution"])
 
@@ -164,7 +170,6 @@ if uploaded_file:
                     cols_ordre = [c for c in ["Global", "6 mois", "4 mois", "3 mois", "2 mois"] if c in df_pv.columns]
                     df_pv = df_pv[cols_ordre]
                     
-                    # Le multiselect ici ne fera plus sauter l'analyse
                     assur_sel = st.multiselect("Assureurs à comparer :", options=df_pv.index.tolist(), default=df_pv.index.tolist()[:5])
                     if assur_sel:
                         st.line_chart(df_pv.loc[assur_sel].T)
