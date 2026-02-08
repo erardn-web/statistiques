@@ -61,7 +61,7 @@ if uploaded_file:
         btn_analyser = st.sidebar.button("🚀 Analyse Complète (10-20-30j)", type="primary", use_container_width=True)
         btn_simuler = st.sidebar.button("🔮 Simuler la date cible", use_container_width=True)
 
-        # Pré-traitement
+        # --- PRÉ-TRAITEMENT ---
         df = df_brut[df_brut.iloc[:, 9].isin(selection)].copy()
         df = df.rename(columns={
             df.columns[2]: "date_facture", df.columns[8]: "assureur",
@@ -73,10 +73,14 @@ if uploaded_file:
         df["date_paiement"] = df["date_paiement"].apply(convertir_date)
         df = df[df["date_facture"].notna()].copy()
         df["montant"] = pd.to_numeric(df["montant"], errors="coerce").fillna(0)
-        df["statut"] = df["statut"].astype(str).lower().strip()
+        
+        # CORRECTION ICI : Ajout de .str avant .lower()
+        df["statut"] = df["statut"].astype(str).str.lower().str.strip()
         df["assureur"] = df["assureur"].fillna("Patient")
         
         ajd = pd.Timestamp(datetime.today().date())
+        
+        # Identification des factures en attente
         f_att = df[df["statut"].str.contains("en attente") & ~df["statut"].str.contains("annulé")].copy()
         
         total_brut = f_att["montant"].sum()
@@ -100,16 +104,15 @@ if uploaded_file:
                     liq, t = calculer_liquidites_precision(f_att, p_hist, [jours_delta])
                     sim_results.append({
                         "Référence Historique": p_name,
-                        "Estimation (CHF)": round(liq[jours_delta]),
+                        "Estimation (CHF)": f"{round(liq[jours_delta]):,}",
                         "Probabilité de paiement": f"{round(t[jours_delta]*100)}%"
                     })
                 
                 st.table(pd.DataFrame(sim_results))
-                st.info("💡 Les différences s'expliquent par l'évolution de la rapidité de paiement des assureurs sur chaque période.")
 
         # --- LOGIQUE : ANALYSE ---
         if btn_analyser:
-            tab1, tab2 = st.tabs(["💰 Liquidités", "🕒 Délais"])
+            tab1, tab2 = st.tabs(["💰 Liquidités Estimées", "🕒 Délais Assureurs"])
             with tab1:
                 for p_name in periods_sel:
                     val = options_p[p_name]
