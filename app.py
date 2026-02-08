@@ -106,7 +106,7 @@ if uploaded_file:
                 
                 with tab1:
                     st.subheader(f"Période : {p_nom}")
-                    horizons = 
+                    horizons = [10, 20, 30] # <--- CORRECTION ICI
                     liq, t = calculer_liquidites_fournisseur(f_att, p_hist, horizons)
                     st.table(pd.DataFrame({
                         "Horizon": [f"Sous {h}j" for h in horizons],
