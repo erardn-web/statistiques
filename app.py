@@ -2,139 +2,100 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime
 
-# --- CONFIGURATION PAGE ---
-st.set_page_config(page_title="Analyseur de Facturation Suisse", layout="wide", page_icon="🏥")
-
-# --- FONCTIONS DE CALCUL ---
+# --- CONFIGURATION ---
+st.set_page_config(page_title="Analytics Facturation", layout="wide", page_icon="🏥")
 
 def nettoyer_donnees(df):
-    """Normalisation et nettoyage des colonnes"""
-    # Renommage basé sur l'index pour la robustesse
-    df = df.rename(columns={
+    """Normalisation des colonnes et types"""
+    # On renomme par index pour la flexibilité, mais avec sécurité
+    cols = {
         df.columns[2]: "date_facture", 
         df.columns[8]: "assureur",
-        df.columns[9]: "fournisseur",
         df.columns[12]: "statut", 
         df.columns[13]: "montant", 
-        df.columns[15]: "date_paiement"
-    })
+        df.columns[15]: "date_paiement",
+        df.columns[9]: "fournisseur"
+    }
+    df = df.rename(columns=cols).copy()
     
-    # Conversion dates
     for col in ["date_facture", "date_paiement"]:
         df[col] = pd.to_datetime(df[col], errors='coerce', dayfirst=True)
     
-    # Nettoyage types
     df["montant"] = pd.to_numeric(df["montant"], errors="coerce").fillna(0)
     df["statut"] = df["statut"].astype(str).str.lower().str.strip()
     df["assureur"] = df["assureur"].fillna("Patient")
     return df
 
-def estimer_liquidites(f_attente, p_hist, jours):
-    """Calcule le montant estimé encaissable dans un délai de X jours"""
-    if p_hist.empty or jours < 0:
-        return 0.0, 0.0
+def calculer_liquidites_vectorise(f_attente, p_hist):
+    """Calcul rapide sans boucles imbriquées"""
+    if p_hist.empty:
+        return {h: 0.0 for h in [10, 20, 30]}, {h: 0.0 for h in [10, 20, 30]}
     
-    # Probabilité de paiement par assureur
-    taux_par_assur = p_hist.groupby("assureur")["delai"].apply(lambda x: (x <= jours).mean())
-    taux_moyen = (p_hist["delai"] <= jours).mean()
+    # Calcul des taux de paiement par assureur et par horizon
+    horizons = [10, 20, 30]
+    taux_par_assur = {}
     
-    # Application du taux historique sur les montants en attente
-    f_attente = f_attente.copy()
-    f_attente["probabilite"] = f_attente["assureur"].map(taux_par_assur).fillna(taux_moyen)
-    total_estime = (f_attente["montant"] * f_attente["probabilite"]).sum()
-    
-    return total_estime, taux_moyen
+    for h in horizons:
+        # Taux de succès historique par assureur pour l'horizon H
+        p_hist[f'paye_{h}'] = p_hist['delai'] <= h
+        taux_par_assur[h] = p_hist.groupby('assureur')[f'paye_{h}'].mean()
 
-# --- INTERFACE STREAMLIT ---
+    liq_estime = {}
+    taux_moyen_global = {}
+    
+    for h in horizons:
+        # Mapper les taux sur les factures en attente
+        f_attente[f'taux_{h}'] = f_attente['assureur'].map(taux_par_assur[h]).fillna(p_hist[f'paye_{h}'].mean())
+        liq_estime[h] = (f_attente['montant'] * f_attente[f'taux_{h}']).sum()
+        taux_moyen_global[h] = p_hist[f'paye_{h}'].mean()
+        
+    return liq_estime, taux_moyen_global
 
+# --- INTERFACE ---
 st.title("🏥 Analyseur de Facturation Pro")
-st.markdown("Optimisation de la trésorerie et analyse des délais assureurs.")
 
-uploaded_file = st.sidebar.file_uploader("📁 Charger le fichier Excel (.xlsx)", type="xlsx")
+uploaded_file = st.sidebar.file_uploader("Fichier Excel", type="xlsx")
 
 if uploaded_file:
-    try:
-        # Chargement
-        df_brut = pd.read_excel(uploaded_file)
-        df = nettoyer_donnees(df_brut)
+    df_brut = pd.read_excel(uploaded_file)
+    df = nettoyer_donnees(df_brut)
+    
+    # Sidebar : Filtres
+    fournisseurs = sorted(df["fournisseur"].dropna().unique())
+    selection = st.sidebar.multiselect("Fournisseurs", fournisseurs, default=fournisseurs)
+    df = df[df["fournisseur"].isin(selection)]
+    
+    # Logique de dates
+    ajd = pd.Timestamp.now().normalize()
+    f_att = df[df["statut"].str.contains("en attente") & ~df["statut"].contains("annulé")].copy()
+    f_att["delai_actuel"] = (ajd - f_att["date_facture"]).dt.days
+    
+    tab1, tab2, tab3 = st.tabs(["💰 Cash-Flow", "📊 Performance Assureurs", "⚠️ Risques"])
+
+    with tab1:
+        st.subheader("Prévisions d'encaissement")
+        p_hist = df[df["date_paiement"].notna()].copy()
+        p_hist["delai"] = (p_hist["date_paiement"] - p_hist["date_facture"]).dt.days
+        p_hist = p_hist[p_hist["delai"] >= 0]
         
-        # --- SIDEBAR FILTRES ---
-        st.sidebar.header("🔍 Filtres & Options")
-        fournisseurs = sorted(df["fournisseur"].dropna().unique().tolist())
-        selection = st.sidebar.multiselect("Fournisseurs :", fournisseurs, default=fournisseurs)
+        liq, taux = calculer_liquidites_vectorise(f_att, p_hist)
         
-        # Filtre sur la sélection
-        df = df[df["fournisseur"].isin(selection)]
-        
-        # Option Date Future
-        st.sidebar.markdown("---")
-        st.sidebar.subheader("📅 Estimation Future")
-        activer_estim = st.sidebar.checkbox("Estimer à une date précise")
-        date_cible = None
-        jours_delta = 0
-        
-        if activer_estim:
-            date_cible = st.sidebar.date_input("Choisir une date cible", value=datetime.today())
-            jours_delta = (pd.Timestamp(date_cible) - pd.Timestamp(datetime.today().date())).days
+        c1, c2, c3 = st.columns(3)
+        metrics = [(c1, 10), (c2, 20), (c3, 30)]
+        for col, h in metrics:
+            col.metric(f"Sous {h} jours", f"{liq[h]:,.0f} CHF", f"{taux[h]:.1%}")
 
-        if st.sidebar.button("🚀 Lancer l'analyse", type="primary"):
-            # Séparation Attente vs Historique
-            ajd = pd.Timestamp.now().normalize()
-            
-            # Factures en attente (Global)
-            f_att = df[df["statut"].str.contains("en attente") & ~df["statut"].str.contains("annulé")].copy()
-            f_att["retard_actuel"] = (ajd - f_att["date_facture"]).dt.days
-            
-            # Historique de paiement
-            p_hist = df[df["date_paiement"].notna()].copy()
-            p_hist["delai"] = (p_hist["date_paiement"] - p_hist["date_facture"]).dt.days
-            p_hist = p_hist[p_hist["delai"] >= 0]
+    with tab2:
+        st.subheader("Délais de paiement moyens")
+        stats = p_hist.groupby("assureur")["delai"].agg(['mean', 'count']).rename(columns={'mean': 'Jours', 'count': 'Volume'})
+        st.bar_chart(stats['Jours'])
+        st.dataframe(stats.sort_values("Jours", ascending=False), use_container_width=True)
 
-            # --- AFFICHAGE ---
-            tab1, tab2, tab3 = st.tabs(["💰 Liquidités & Prévisions", "🕒 Analyse Délais", "⚠️ Retards"])
+    with tab3:
+        st.subheader("Factures critiques (>30 jours)")
+        retards = f_att[f_att["delai_actuel"] > 30].sort_values("delai_actuel", ascending=False)
+        st.warning(f"Il y a {len(retards)} factures en souffrance pour un total de {retards['montant'].sum():,.2f} CHF.")
+        st.dataframe(retards[["date_facture", "assureur", "montant", "delai_actuel"]])
 
-            with tab1:
-                # Section Date Spécifique
-                if activer_estim and jours_delta >= 0:
-                    val_estimee, prob_globale = estimer_liquidites(f_att, p_hist, jours_delta)
-                    st.success(f"### Prévision au {date_cible.strftime('%d.%m.%Y')} (+{jours_delta} jours)")
-                    c1, c2 = st.columns(2)
-                    c1.metric("Encaissement estimé", f"{val_estimee:,.0f} CHF")
-                    c2.metric("Indice de confiance", f"{prob_globale:.1%}")
-                    st.divider()
-
-                # Section Horizons Classiques
-                st.subheader("Estimations standards")
-                cols = st.columns(3)
-                for i, h in enumerate([10, 20, 30]):
-                    val, taux = estimer_liquidites(f_att, p_hist, h)
-                    cols[i].metric(f"Sous {h} jours", f"{val:,.0f} CHF", f"Taux: {taux:.0%}")
-                
-                st.info(f"Total brut actuellement en attente : {f_att['montant'].sum():,.2f} CHF")
-
-            with tab2:
-                st.subheader("Performance par Assureur")
-                if not p_hist.empty:
-                    stats = p_hist.groupby("assureur")["delai"].agg(['mean', 'median', 'std', 'count']).reset_index()
-                    stats = stats.rename(columns={'mean': 'Moyenne (j)', 'median': 'Médiane (j)', 'count': 'Nb Factures'})
-                    
-                    # Graphique
-                    st.bar_chart(stats.set_index("assureur")["Moyenne (j)"])
-                    st.dataframe(stats.sort_values("Moyenne (j)"), use_container_width=True)
-                else:
-                    st.warning("Aucune donnée historique de paiement trouvée.")
-
-            with tab3:
-                st.subheader("Analyse des Retards")
-                retards_30 = f_att[f_att["retard_actuel"] > 30].copy()
-                st.error(f"Il y a **{len(retards_30)}** factures avec plus de 30 jours de retard.")
-                
-                if not retards_30.empty:
-                    st.dataframe(retards_30[["date_facture", "assureur", "montant", "retard_actuel"]].sort_values("retard_actuel", ascending=False))
-                    st.write(f"Total à relancer : **{retards_30['montant'].sum():,.2f} CHF**")
-
-    except Exception as e:
-        st.error(f"Erreur d'analyse : {e}")
-        st.info("Vérifiez que votre fichier Excel possède les colonnes attendues (Date, Assureur, Statut, Montant).")
 else:
-    st.info("👋 Bienvenue ! Veuillez charger un fichier Excel dans la barre latérale pour analyser vos données.")
+    st.info("💡 Chargez un export Excel pour débuter l'analyse.")
