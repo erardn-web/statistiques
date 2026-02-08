@@ -66,10 +66,8 @@ if uploaded_file:
         
         btn_simuler = col_b2.button("🔮 Simuler", use_container_width=True)
 
-        # --- NETTOYAGE (Correction du Mapping) ---
+        # --- NETTOYAGE ---
         df = df_brut[df_brut.iloc[:, 9].isin(selection)].copy()
-        
-        # On utilise les positions exactes de vos colonnes (2, 8, 9, 12, 13, 15)
         df = df.rename(columns={
             df.columns[2]: "date_facture", 
             df.columns[8]: "assureur",
@@ -78,7 +76,6 @@ if uploaded_file:
             df.columns[13]: "montant", 
             df.columns[15]: "date_paiement"
         })
-        
         df["date_facture"] = df["date_facture"].apply(convertir_date)
         df["date_paiement"] = df["date_paiement"].apply(convertir_date)
         df = df[df["date_facture"].notna()].copy()
@@ -109,7 +106,7 @@ if uploaded_file:
                     res_sim.append({"Période": p_nom, "Estimation (CHF)": f"{round(liq[jours_delta]):,}", "Probabilité": f"{t[jours_delta]:.1%}"})
                 st.table(pd.DataFrame(res_sim))
 
-        # --- AFFICHAGE DES ONGLETS (Session State) ---
+        # --- AFFICHAGE DES ONGLETS ---
         if st.session_state.analyse_lancee:
             tab1, tab2, tab3, tab4 = st.tabs(["💰 Liquidités", "🕒 Délais", "⚠️ Retards", "📈 Évolution"])
 
@@ -145,17 +142,25 @@ if uploaded_file:
                     df_att_30 = f_att[f_att["delai_actuel"] > 30].copy()
                     df_pay_30 = p_hist[p_hist["delai"] > 30].copy()
                     plus_30 = pd.concat([df_pay_30, df_att_30])
+                    
                     total_vol = df_p.groupby("assureur").size().reset_index(name="Volume Total")
                     ret_assur = plus_30.groupby("assureur").size().reset_index(name="Nb Retards")
                     merged = pd.merge(ret_assur, total_vol, on="assureur", how="right").fillna(0)
                     merged["Nb Retards"] = merged["Nb Retards"].astype(int)
                     merged["% Retard"] = (merged["Nb Retards"] / merged["Volume Total"] * 100).round(1)
+                    
+                    st.write(f"Nombre de factures en retard sur cette période : **{int(merged['Nb Retards'].sum())}**")
                     st.dataframe(merged[["assureur", "Nb Retards", "Volume Total", "% Retard"]].sort_values("% Retard", ascending=False), use_container_width=True)
 
             with tab4:
                 st.subheader("📈 Évolution du délai de remboursement")
                 periodes_graph = {"Global": None, "6 mois": 6, "4 mois": 4, "3 mois": 3, "2 mois": 2}
                 evol_data = []
+                
+                # Calcul pour la pré-sélection (Volume Global)
+                p_hist_global = df[df["date_paiement"].notna()].copy()
+                top_assurances = p_hist_global.groupby("assureur").size().sort_values(ascending=False).head(5).index.tolist()
+
                 for n, v in periodes_graph.items():
                     lim = ajd - pd.DateOffset(months=v) if v else df["date_facture"].min()
                     h_tmp = df[(df["date_paiement"].notna()) & (df["date_facture"] >= lim)].copy()
@@ -164,15 +169,23 @@ if uploaded_file:
                         m = h_tmp.groupby("assureur")["delai"].mean().reset_index()
                         m["Période"] = n
                         evol_data.append(m)
+                
                 if evol_data:
                     df_ev = pd.concat(evol_data)
                     df_pv = df_ev.pivot(index="assureur", columns="Période", values="delai")
+                    
+                    # Ordre chronologique demandé : Global à gauche, 2 mois à droite
                     cols_ordre = [c for c in ["Global", "6 mois", "4 mois", "3 mois", "2 mois"] if c in df_pv.columns]
                     df_pv = df_pv[cols_ordre]
                     
-                    assur_sel = st.multiselect("Assureurs à comparer :", options=df_pv.index.tolist(), default=df_pv.index.tolist()[:5])
+                    assur_sel = st.multiselect("Sélectionner les assureurs (Top 5 par volume pré-sélectionnés) :", 
+                                               options=df_pv.index.tolist(), 
+                                               default=[a for a in top_assurances if a in df_pv.index])
+                    
                     if assur_sel:
                         st.line_chart(df_pv.loc[assur_sel].T)
+                        st.write("**Légende des couleurs du tableau :**")
+                        st.caption("🔴 Rouge : Délai maximum (plus lent) | 🟢 Vert : Délai minimum (plus rapide) pour chaque assureur.")
                         st.dataframe(df_pv.loc[assur_sel].style.highlight_max(axis=1, color='#ff9999').highlight_min(axis=1, color='#99ff99'))
 
     except Exception as e:
