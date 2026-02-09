@@ -5,15 +5,6 @@ from datetime import datetime
 # --- CONFIGURATION PAGE WEB ---
 st.set_page_config(page_title="Analyseur de Facturation Pro", layout="wide", page_icon="🏥")
 
-# --- MAPPING DES GROUPES (LAMal uniquement) ---
-MAPPING_GROUPES = {
-    "Visana (Groupe)": ["Visana Services AG", "vivacare", "sana24", "GALENOS"],
-    "Helsana (Groupe)": ["Helsana Assurances", "Progrès", "Sansan"],
-    "Groupe Mutuel (Groupe)": ["Groupe Mutuel", "caisse maladie", "Caisse maladie Avenir", "SUPRA-1846 SA", "Philos, caisse maladie", "Easy Sana caisse maladie"],
-    "CSS (Groupe)": ["CSS Assurances", "Intras, caisse maladie", "Arcosana"]
-}
-REVERSE_MAPPING = {filiale.lower().strip(): parent for parent, filiales in MAPPING_GROUPES.items() for filiale in filiales}
-
 # --- INITIALISATION DE L'ÉTAT ---
 if 'analyse_lancee' not in st.session_state:
     st.session_state.analyse_lancee = False
@@ -57,12 +48,11 @@ if uploaded_file:
         # --- FILTRES (SIDEBAR) ---
         st.sidebar.header("🔍 2. Filtres")
         
-        # AJOUT : Case à cocher pour le regroupement
-        regrouper = st.sidebar.checkbox("🔗 Regrouper les groupes (LAMal uniquement)", value=False)
-        
+        # Filtre Fournisseurs (Colonne J / Index 9)
         fournisseurs = df_brut.iloc[:, 9].dropna().unique().tolist()
         sel_fournisseurs = st.sidebar.multiselect("Fournisseurs :", options=sorted(fournisseurs), default=fournisseurs)
         
+        # Filtre Lois (Colonne E / Index 4)
         lois = df_brut.iloc[:, 4].dropna().unique().tolist()
         sel_lois = st.sidebar.multiselect("Types de Loi :", options=sorted(lois), default=lois)
         
@@ -81,6 +71,7 @@ if uploaded_file:
         btn_simuler = col_b2.button("🔮 Simuler", use_container_width=True)
 
         # --- NETTOYAGE ET APPLICATION FILTRES ---
+        # Application des filtres Fournisseurs ET Lois
         df = df_brut[
             (df_brut.iloc[:, 9].isin(sel_fournisseurs)) & 
             (df_brut.iloc[:, 4].isin(sel_lois))
@@ -96,23 +87,12 @@ if uploaded_file:
             df.columns[15]: "date_paiement"
         })
         
-        # Traitement spécifique de l'assureur
-        df["assureur"] = df["assureur"].fillna("Patient").astype(str).str.strip()
-        df["loi"] = df["loi"].fillna("").astype(str)
-
-        # Application du regroupement selon condition LAMal + Case cochée
-        if regrouper:
-            df["assureur"] = df.apply(
-                lambda r: REVERSE_MAPPING.get(r["assureur"].lower(), r["assureur"]) 
-                if "LAMal" in r["loi"] else r["assureur"], 
-                axis=1
-            )
-
         df["date_facture"] = df["date_facture"].apply(convertir_date)
         df["date_paiement"] = df["date_paiement"].apply(convertir_date)
         df = df[df["date_facture"].notna()].copy()
         df["montant"] = pd.to_numeric(df["montant"], errors="coerce").fillna(0)
         df["statut"] = df["statut"].astype(str).str.lower().str.strip()
+        df["assureur"] = df["assureur"].fillna("Patient")
         
         ajd = pd.Timestamp(datetime.today().date())
         f_att = df[df["statut"].str.startswith("en attente") & (df["statut"] != "en attente (annulé)")].copy()
@@ -173,20 +153,55 @@ if uploaded_file:
                     df_pay_30 = p_hist[p_hist["delai"] > 30].copy()
                     plus_30 = pd.concat([df_pay_30, df_att_30])
                     
-                    if not df_p.empty:
-                        total_vol = df_p.groupby("assureur").size().reset_index(name="Volume Total")
-                        ret_assur = plus_30.groupby("assureur").size().reset_index(name="Nb Retards")
-                        merged = pd.merge(ret_assur, total_vol, on="assureur", how="right").fillna(0)
-                        merged["Nb Retards"] = merged["Nb Retards"].astype(int)
-                        merged["% Retard"] = (merged["Nb Retards"] / merged["Volume Total"] * 100).round(1)
-                        st.dataframe(merged.sort_values("% Retard", ascending=False), use_container_width=True)
+                    total_vol = df_p.groupby("assureur").size().reset_index(name="Volume Total")
+                    ret_assur = plus_30.groupby("assureur").size().reset_index(name="Nb Retards")
+                    merged = pd.merge(ret_assur, total_vol, on="assureur", how="right").fillna(0)
+                    merged["Nb Retards"] = merged["Nb Retards"].astype(int)
+                    merged["% Retard"] = (merged["Nb Retards"] / merged["Volume Total"] * 100).round(1)
+                    
+                    st.metric(f"Total Retards ({p_name})", f"{int(merged['Nb Retards'].sum())} factures")
+                    st.dataframe(merged[["assureur", "Nb Retards", "Volume Total", "% Retard"]].sort_values("% Retard", ascending=False), use_container_width=True)
+
+            with tab4:
+                st.subheader("📈 Évolution du délai de remboursement")
+                ordre_chrono = ["Global", "6 mois", "4 mois", "3 mois", "2 mois"]
+                periodes_graph = {"Global": None, "6 mois": 6, "4 mois": 4, "3 mois": 3, "2 mois": 2}
+                evol_data = []
                 
-                with tab4:
-                    st.subheader(f"Évolution temporelle ({p_name})")
-                    if not p_hist.empty:
-                        p_hist["mois"] = p_hist["date_facture"].dt.to_period("M").astype(str)
-                        evol = p_hist.groupby("mois")["delai"].mean().reset_index()
-                        st.line_chart(evol.set_index("mois"))
+                # Top 5 volume
+                p_hist_global = df[df["date_paiement"].notna()].copy()
+                top_assurances = p_hist_global.groupby("assureur").size().sort_values(ascending=False).head(5).index.tolist()
+
+                for n, v in periodes_graph.items():
+                    lim = ajd - pd.DateOffset(months=v) if v else df["date_facture"].min()
+                    h_tmp = df[(df["date_paiement"].notna()) & (df["date_facture"] >= lim)].copy()
+                    h_tmp["delai"] = (h_tmp["date_paiement"] - h_tmp["date_facture"]).dt.days
+                    if not h_tmp.empty:
+                        m = h_tmp.groupby("assureur")["delai"].mean().reset_index()
+                        m["Période"] = n
+                        evol_data.append(m)
+                
+                if evol_data:
+                    df_ev = pd.concat(evol_data)
+                    df_pv = df_ev.pivot(index="assureur", columns="Période", values="delai")
+                    cols_presentes = [c for c in ordre_chrono if c in df_pv.columns]
+                    df_pv = df_pv[cols_presentes]
+                    
+                    assur_sel = st.multiselect("Sélectionner les assureurs (Top 5 volume pré-sélectionnés) :", 
+                                               options=df_pv.index.tolist(), 
+                                               default=[a for a in top_assurances if a in df_pv.index])
+                    
+                    if assur_sel:
+                        df_plot = df_pv.loc[assur_sel].T
+                        df_plot.index = pd.CategoricalIndex(df_plot.index, categories=ordre_chrono, ordered=True)
+                        df_plot = df_plot.sort_index()
+                        
+                        st.line_chart(df_plot)
+                        st.write("**Détails par période (en jours) :**")
+                        st.caption("🔴 Rouge : Délai max (lent) | 🟢 Vert : Délai min (rapide) pour l'assureur.")
+                        st.dataframe(df_pv.loc[assur_sel].style.highlight_max(axis=1, color='#ff9999').highlight_min(axis=1, color='#99ff99'))
 
     except Exception as e:
-        st.error(f"Erreur lors de l'analyse : {e}")
+        st.error(f"Erreur : {e}")
+else:
+    st.info("👋 Veuillez charger votre fichier Excel.")
