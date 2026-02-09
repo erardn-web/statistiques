@@ -5,15 +5,13 @@ from datetime import datetime
 # --- CONFIGURATION PAGE WEB ---
 st.set_page_config(page_title="Analyseur de Facturation Pro", layout="wide", page_icon="🏥")
 
-# --- MAPPING DES GROUPES D'ASSURANCES (Ciblés LAMal) ---
+# --- MAPPING DES GROUPES (LAMal uniquement) ---
 MAPPING_GROUPES = {
-    "Visana (Groupe LAMal)": ["Visana Services AG", "vivacare", "sana24", "GALENOS"],
-    "Helsana (Groupe LAMal)": ["Helsana Assurances", "Progrès", "Sansan"],
-    "Groupe Mutuel (Groupe LAMal)": ["Groupe Mutuel", "caisse maladie", "Caisse maladie Avenir", "SUPRA-1846 SA", "Philos, caisse maladie", "Easy Sana caisse maladie"],
-    "CSS (Groupe LAMal)": ["CSS Assurances", "Intras, caisse maladie", "Arcosana"]
+    "Visana (Groupe)": ["Visana Services AG", "vivacare", "sana24", "GALENOS"],
+    "Helsana (Groupe)": ["Helsana Assurances", "Progrès", "Sansan"],
+    "Groupe Mutuel (Groupe)": ["Groupe Mutuel", "caisse maladie", "Caisse maladie Avenir", "SUPRA-1846 SA", "Philos, caisse maladie", "Easy Sana caisse maladie"],
+    "CSS (Groupe)": ["CSS Assurances", "Intras, caisse maladie", "Arcosana"]
 }
-
-# Inversion pour recherche rapide (minuscules pour éviter les erreurs de saisie)
 REVERSE_MAPPING = {filiale.lower().strip(): parent for parent, filiales in MAPPING_GROUPES.items() for filiale in filiales}
 
 # --- INITIALISATION DE L'ÉTAT ---
@@ -54,65 +52,62 @@ uploaded_file = st.sidebar.file_uploader("Charger le fichier Excel (.xlsx)", typ
 
 if uploaded_file:
     try:
-        # Lecture brute pour extraire les options de filtres
         df_brut = pd.read_excel(uploaded_file, header=0)
         
         # --- FILTRES (SIDEBAR) ---
-        st.sidebar.header("🔍 2. Configuration & Filtres")
+        st.sidebar.header("🔍 2. Filtres")
         
-        # CASE À COCHER : Activation du regroupement
-        regrouper = st.sidebar.checkbox("🔗 Regrouper les groupes LAMal", value=True, help="Fusionne les filiales (ex: Philos, Avenir) sous leur groupe parent uniquement pour la loi LAMal.")
+        # AJOUT : Case à cocher pour le regroupement
+        regrouper = st.sidebar.checkbox("🔗 Regrouper les groupes (LAMal uniquement)", value=False)
         
-        # Extraction des noms pour les filtres (en tenant compte du regroupement ou non)
-        col_loi_idx, col_assur_idx, col_fourn_idx = 4, 8, 9
+        fournisseurs = df_brut.iloc[:, 9].dropna().unique().tolist()
+        sel_fournisseurs = st.sidebar.multiselect("Fournisseurs :", options=sorted(fournisseurs), default=fournisseurs)
         
-        def obtenir_nom_traite(row):
-            nom = str(row.iloc[col_assur_idx]).strip()
-            loi = str(row.iloc[col_loi_idx]).strip()
-            if regrouper and "LAMal" in loi:
-                return REVERSE_MAPPING.get(nom.lower(), nom)
-            return nom
-
-        # Application du traitement sur une version temporaire pour les filtres
-        df_temp_filtres = df_brut.copy()
-        df_temp_filtres['assureur_traite'] = df_temp_filtres.apply(obtenir_nom_traite, axis=1)
-
-        fournisseurs = sorted(df_temp_filtres.iloc[:, col_fourn_idx].dropna().unique().tolist())
-        sel_fournisseurs = st.sidebar.multiselect("Fournisseurs :", options=fournisseurs, default=fournisseurs)
+        lois = df_brut.iloc[:, 4].dropna().unique().tolist()
+        sel_lois = st.sidebar.multiselect("Types de Loi :", options=sorted(lois), default=lois)
         
-        lois = sorted(df_temp_filtres.iloc[:, col_loi_idx].dropna().unique().tolist())
-        sel_lois = st.sidebar.multiselect("Types de Loi :", options=lois, default=lois)
+        st.sidebar.header("📊 3. Options Délais")
+        show_med = st.sidebar.checkbox("Afficher la Médiane", value=True)
+        show_std = st.sidebar.checkbox("Afficher l'Écart-type", value=True)
         
-        assureurs = sorted(df_temp_filtres['assureur_traite'].unique().tolist())
-        sel_assureurs = st.sidebar.multiselect("Assureurs :", options=assureurs, default=assureurs)
+        st.sidebar.header("📅 4. Périodes & Simulation")
+        options_p = {"Global": None, "6 mois": 6, "4 mois": 4, "3 mois": 3, "2 mois": 2, "1 mois": 1}
+        periods_sel = st.sidebar.multiselect("Analyser les périodes :", list(options_p.keys()), default=["Global", "4 mois"])
+        date_cible = st.sidebar.date_input("Date cible (simulation) :", value=datetime.today())
+        
+        col_b1, col_b2 = st.sidebar.columns(2)
+        if col_b1.button("🚀 Analyser", type="primary", use_container_width=True):
+            st.session_state.analyse_lancee = True
+        btn_simuler = col_b2.button("🔮 Simuler", use_container_width=True)
 
-        # --- NETTOYAGE ET APPLICATION DES DONNÉES ---
-        df = df_brut.rename(columns={
-            df_brut.columns[2]: "date_facture", 
-            df_brut.columns[4]: "loi",
-            df_brut.columns[8]: "assureur",
-            df_brut.columns[9]: "fournisseur", 
-            df_brut.columns[12]: "statut", 
-            df_brut.columns[13]: "montant", 
-            df_brut.columns[15]: "date_paiement"
-        }).copy()
-
-        # Nettoyage initial
-        df["assureur"] = df["assureur"].fillna("Patient").astype(str).str.strip()
-        df["loi"] = df["loi"].fillna("Inconnue").astype(str).str.strip()
-
-        # Application définitive du regroupement selon le choix
-        if regrouper:
-            df["assureur"] = df.apply(lambda r: REVERSE_MAPPING.get(r["assureur"].lower(), r["assureur"]) if "LAMal" in r["loi"] else r["assureur"], axis=1)
-
-        # Filtrage basé sur les sélections sidebar
-        df = df[
-            (df["fournisseur"].isin(sel_fournisseurs)) & 
-            (df["loi"].isin(sel_lois)) &
-            (df["assureur"].isin(sel_assureurs))
+        # --- NETTOYAGE ET APPLICATION FILTRES ---
+        df = df_brut[
+            (df_brut.iloc[:, 9].isin(sel_fournisseurs)) & 
+            (df_brut.iloc[:, 4].isin(sel_lois))
         ].copy()
 
-        # Conversion des formats
+        df = df.rename(columns={
+            df.columns[2]: "date_facture", 
+            df.columns[4]: "loi",
+            df.columns[8]: "assureur",
+            df.columns[9]: "fournisseur", 
+            df.columns[12]: "statut", 
+            df.columns[13]: "montant", 
+            df.columns[15]: "date_paiement"
+        })
+        
+        # Traitement spécifique de l'assureur
+        df["assureur"] = df["assureur"].fillna("Patient").astype(str).str.strip()
+        df["loi"] = df["loi"].fillna("").astype(str)
+
+        # Application du regroupement selon condition LAMal + Case cochée
+        if regrouper:
+            df["assureur"] = df.apply(
+                lambda r: REVERSE_MAPPING.get(r["assureur"].lower(), r["assureur"]) 
+                if "LAMal" in r["loi"] else r["assureur"], 
+                axis=1
+            )
+
         df["date_facture"] = df["date_facture"].apply(convertir_date)
         df["date_paiement"] = df["date_paiement"].apply(convertir_date)
         df = df[df["date_facture"].notna()].copy()
@@ -126,43 +121,72 @@ if uploaded_file:
         st.metric("💰 TOTAL BRUT EN ATTENTE", f"{f_att['montant'].sum():,.2f} CHF")
         st.markdown("---")
 
-        # --- ACTIONS ---
-        st.sidebar.header("🚀 3. Actions")
-        col_b1, col_b2 = st.sidebar.columns(2)
-        if col_b1.button("Lancer l'Analyse", type="primary"):
-            st.session_state.analyse_lancee = True
-        
+        if btn_simuler:
+            jours_delta = (pd.Timestamp(date_cible) - ajd).days
+            if jours_delta < 0:
+                st.error("La date doit être dans le futur.")
+            else:
+                st.subheader(f"🔮 Simulation au {date_cible.strftime('%d.%m.%Y')} (+{jours_delta}j)")
+                res_sim = []
+                for p_nom in periods_sel:
+                    val = options_p[p_nom]
+                    limit = ajd - pd.DateOffset(months=val) if val else df["date_facture"].min()
+                    p_hist_sim = df[(df["date_paiement"].notna()) & (df["date_facture"] >= limit)].copy()
+                    p_hist_sim["delai"] = (p_hist_sim["date_paiement"] - p_hist_sim["date_facture"]).dt.days
+                    liq, t = calculer_liquidites_fournisseur(f_att, p_hist_sim, [jours_delta])
+                    res_sim.append({"Période": p_nom, "Estimation (CHF)": f"{round(liq[jours_delta]):,}", "Probabilité": f"{t[jours_delta]:.1%}"})
+                st.table(pd.DataFrame(res_sim))
+
         if st.session_state.analyse_lancee:
-            tab1, tab2, tab3 = st.tabs(["💰 Liquidités", "🕒 Délais", "⚠️ Retards"])
+            tab1, tab2, tab3, tab4 = st.tabs(["💰 Liquidités", "🕒 Délais", "⚠️ Retards", "📈 Évolution"])
 
-            p_hist = df[df["date_paiement"].notna()].copy()
-            p_hist["delai"] = (p_hist["date_paiement"] - p_hist["date_facture"]).dt.days
+            for p_name in periods_sel:
+                val = options_p[p_name]
+                limit_p = ajd - pd.DateOffset(months=val) if val else df["date_facture"].min()
+                df_p = df[df["date_facture"] >= limit_p]
+                p_hist = df_p[df_p["date_paiement"].notna()].copy()
+                p_hist["delai"] = (p_hist["date_paiement"] - p_hist["date_facture"]).dt.days
+                
+                with tab1:
+                    st.subheader(f"Période : {p_name}")
+                    horizons = [10, 20, 30]
+                    liq, t = calculer_liquidites_fournisseur(f_att, p_hist, horizons)
+                    st.table(pd.DataFrame({
+                        "Horizon": [f"Sous {h}j" for h in horizons],
+                        "Estimation (CHF)": [f"{round(liq[h]):,}" for h in horizons],
+                        "Probabilité": [f"{round(t[h]*100)}%" for h in horizons]
+                    }))
 
-            with tab1:
-                horizons = [10, 20, 30]
-                liq, t = calculer_liquidites_fournisseur(f_att, p_hist, horizons)
-                st.subheader("Prévisions de trésorerie")
-                st.table(pd.DataFrame({
-                    "Horizon": [f"Sous {h}j" for h in horizons],
-                    "Estimation (CHF)": [f"{round(liq[h]):,}" for h in horizons],
-                    "Confiance": [f"{round(t[h]*100)}%" for h in horizons]
-                }))
+                with tab2:
+                    st.subheader(f"Délais par assureur ({p_name})")
+                    if not p_hist.empty:
+                        stats = p_hist.groupby("assureur")["delai"].agg(['mean', 'median', 'std']).reset_index()
+                        stats.columns = ["Assureur", "Moyenne (j)", "Médiane (j)", "Écart-type (j)"]
+                        cols = ["Assureur", "Moyenne (j)"]
+                        if show_med: cols.append("Médiane (j)")
+                        if show_std: cols.append("Écart-type (j)")
+                        st.dataframe(stats[cols].sort_values("Moyenne (j)", ascending=False), use_container_width=True)
 
-            with tab2:
-                st.subheader("Performance de paiement par Assureur")
-                if not p_hist.empty:
-                    stats = p_hist.groupby("assureur")["delai"].agg(['mean', 'median', 'count']).reset_index()
-                    stats.columns = ["Assureur", "Moyenne (j)", "Médiane (j)", "Volume"]
-                    st.dataframe(stats.sort_values("Moyenne (j)", ascending=False), use_container_width=True)
-
-            with tab3:
-                st.subheader("Analyse des retards actifs (> 30 jours)")
-                df_retard = f_att[f_att["delai_actuel"] > 30].copy()
-                if not df_retard.empty:
-                    agg_retard = df_retard.groupby("assureur")["montant"].sum().reset_index()
-                    st.dataframe(agg_retard.sort_values("montant", ascending=False), use_container_width=True)
-                else:
-                    st.success("Aucun retard de plus de 30 jours détecté.")
+                with tab3:
+                    st.subheader(f"Analyse des retards > 30j ({p_name})")
+                    df_att_30 = f_att[f_att["delai_actuel"] > 30].copy()
+                    df_pay_30 = p_hist[p_hist["delai"] > 30].copy()
+                    plus_30 = pd.concat([df_pay_30, df_att_30])
+                    
+                    if not df_p.empty:
+                        total_vol = df_p.groupby("assureur").size().reset_index(name="Volume Total")
+                        ret_assur = plus_30.groupby("assureur").size().reset_index(name="Nb Retards")
+                        merged = pd.merge(ret_assur, total_vol, on="assureur", how="right").fillna(0)
+                        merged["Nb Retards"] = merged["Nb Retards"].astype(int)
+                        merged["% Retard"] = (merged["Nb Retards"] / merged["Volume Total"] * 100).round(1)
+                        st.dataframe(merged.sort_values("% Retard", ascending=False), use_container_width=True)
+                
+                with tab4:
+                    st.subheader(f"Évolution temporelle ({p_name})")
+                    if not p_hist.empty:
+                        p_hist["mois"] = p_hist["date_facture"].dt.to_period("M").astype(str)
+                        evol = p_hist.groupby("mois")["delai"].mean().reset_index()
+                        st.line_chart(evol.set_index("mois"))
 
     except Exception as e:
-        st.error(f"Erreur lors du traitement : {e}")
+        st.error(f"Erreur lors de l'analyse : {e}")
