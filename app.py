@@ -92,7 +92,7 @@ elif st.session_state.page == "factures":
             btn_simuler = col_b2.button("🔮 Simuler", use_container_width=True)
 
             df = df_brut[(df_brut.iloc[:, 9].isin(sel_fournisseurs)) & (df_brut.iloc[:, 4].isin(sel_lois))].copy()
-            df = df.rename(columns={df.columns[2]: "date_facture", df.columns[4]: "loi", df.columns[8]: "assureur", df.columns[9]: "fournisseur", df.columns[12]: "statut", df.columns[13]: "montant", df.columns[15]: "date_paiement"})
+            df = df.rename(columns={df.columns: "date_facture", df.columns: "loi", df.columns: "assureur", df.columns: "fournisseur", df.columns: "statut", df.columns: "montant", df.columns: "date_paiement"})
             df["date_facture"] = df["date_facture"].apply(convertir_date)
             df["date_paiement"] = df["date_paiement"].apply(convertir_date)
             df = df[df["date_facture"].notna()].copy()
@@ -177,7 +177,7 @@ elif st.session_state.page == "factures":
             st.error(f"Erreur d'analyse : {e}")
 
 # ==========================================
-# 👨‍⚕️ MODULE MÉDECINS (OPTIMISÉ XXL + TENDANCE RATIO)
+# 👨‍⚕️ MODULE MÉDECINS (OPTIMISÉ XXL + TENDANCE RATIO + %)
 # ==========================================
 elif st.session_state.page == "medecins":
     st.markdown("<style>.block-container { padding-left: 1rem; padding-right: 1rem; max-width: 100%; }</style>", unsafe_allow_html=True)
@@ -212,13 +212,13 @@ elif st.session_state.page == "medecins":
                 
                 tab_final = stats_ca.merge(ca_90, on="medecin", how="left").merge(ca_365, on="medecin", how="left").fillna(0)
 
-                # Logique Tendance demandée (Ratio 90j / 365j)
+                # Logique Tendance avec Ratio et Affichage %
                 def calc_tendance_ratio(row):
                     if row["CA 365j"] <= 0: return "⚪ Inconnu"
                     ratio = (row["CA 90j"] / row["CA 365j"]) * 100
-                    if ratio <= 23: return "↘️ Baisse"
-                    elif 23 < ratio < 27: return "➡️ Stable"
-                    else: return "↗️ Hausse"
+                    if ratio <= 23: return f"↘️ Baisse ({ratio:.1f}%)"
+                    elif 23 < ratio < 27: return f"➡️ Stable ({ratio:.1f}%)"
+                    else: return f"↗️ Hausse ({ratio:.1f}%)"
 
                 tab_final["Tendance"] = tab_final.apply(calc_tendance_ratio, axis=1)
 
