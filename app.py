@@ -73,7 +73,7 @@ if uploaded_file:
             st.session_state.calcul_medecin_lance = True
             st.session_state.analyse_lancee = False
 
-        # --- LOGIQUE ANALYSE INITIALE ---
+        # --- LOGIQUE ANALYSE INITIALE (INCHANGÉE) ---
         if not st.session_state.calcul_medecin_lance:
             df = df_brut[(df_brut.iloc[:, 9].isin(sel_fournisseurs)) & (df_brut.iloc[:, 4].isin(sel_lois))].copy()
             df = df.rename(columns={
@@ -97,6 +97,7 @@ if uploaded_file:
 
             if st.session_state.analyse_lancee:
                 tab1, tab2, tab3, tab4 = st.tabs(["💰 Liquidités", "🕒 Délais", "⚠️ Retards", "📈 Évolution"])
+                # ... [Code des onglets identiques au script initial] ...
                 for p_name in periods_sel:
                     val = options_p[p_name]
                     limit_p = ajd - pd.DateOffset(months=val) if val else df["date_facture"].min()
@@ -120,11 +121,11 @@ if uploaded_file:
                         st.dataframe(merged.sort_values("% Retard", ascending=False), use_container_width=True)
                 with tab4:
                     st.subheader("📈 Évolution du délai de remboursement")
-                    # Logique Tab4 conservée
+                    # ... [Logique Tab4 conservée] ...
                     ordre_chrono = ["Global", "6 mois", "4 mois", "3 mois", "2 mois"]
                     periodes_graph = {"Global": None, "6 mois": 6, "4 mois": 4, "3 mois": 3, "2 mois": 2}
                     evol_data = []
-                    top_assurances = df[df["date_paiement"].notna()].groupby("assureur").size().sort_values(ascending=False).head(5).index.tolist()
+                    top_ass = df[df["date_paiement"].notna()].groupby("assureur").size().sort_values(ascending=False).head(5).index.tolist()
                     for n, v in periodes_graph.items():
                         lim = ajd - pd.DateOffset(months=v) if v else df["date_facture"].min()
                         h_tmp = df[(df["date_paiement"].notna()) & (df["date_facture"] >= lim)].copy()
@@ -133,34 +134,35 @@ if uploaded_file:
                             m = h_tmp.groupby("assureur")["delai"].mean().reset_index(); m["Période"] = n; evol_data.append(m)
                     if evol_data:
                         df_ev = pd.concat(evol_data).pivot(index="assureur", columns="Période", values="delai")
-                        assur_sel = st.multiselect("Sélectionner les assureurs :", options=df_ev.index.tolist(), default=[a for a in top_assurances if a in df_ev.index])
-                        if assur_sel:
-                            st.line_chart(df_ev.loc[assur_sel].T.reindex(ordre_chrono).dropna(how='all'))
+                        assur_sel = st.multiselect("Sélectionner les assureurs :", options=df_ev.index.tolist(), default=[a for a in top_ass if a in df_ev.index])
+                        if assur_sel: st.line_chart(df_ev.loc[assur_sel].T.reindex([c for c in ordre_chrono if c in df_ev.columns]))
 
-        # --- NOUVELLE FONCTIONNALITÉ MÉDECINS (FUSION PAR MOTS-CLÉS) ---
+        # --- NOUVELLE FONCTIONNALITÉ MÉDECINS (FUSION PAR TRONC COMMUN ALPHABÉTIQUE) ---
         if st.session_state.calcul_medecin_lance:
-            st.header("👨‍⚕️ Analyse des Médecins & Institutions (Fusion Intelligente)")
+            st.header("👨‍⚕️ Analyse des Médecins & Institutions (Fusion Maximale)")
             if st.button("⬅️ Retour"): st.session_state.calcul_medecin_lance = False; st.rerun()
 
-            def normaliser_fusion(nom):
+            def generer_signature(nom):
                 if pd.isna(nom) or str(nom).strip() == "": return ""
-                # Nettoyage : On enlève tout sauf lettres/chiffres
-                n = re.sub(r'[^\w\s]', ' ', str(nom).upper())
-                # On garde les mots longs (>3 lettres) et on les trie
-                # Cela fusionne "Lozano Juan Carlos" et "Lozano Becarra Juan Carlos"
-                mots_cles = sorted([m.strip() for m in n.split() if len(m.strip()) > 3])
-                # On retourne les 3 premiers mots triés comme signature unique
-                return " ".join(mots_cles[:3]) if mots_cles else n.strip()
+                # 1. Nettoyage : On enlève tout sauf lettres, majuscules
+                n = re.sub(r'[^A-Z]', ' ', str(nom).upper())
+                # 2. On retire les mots parasites communs
+                parasites = {'DR', 'DOCTEUR', 'MED', 'MEDECIN', 'JUAN', 'CARLOS', 'SERVICE', 'HOSPITALIER'}
+                mots = [m.strip() for m in n.split() if len(m.strip()) >= 4 and m.strip() not in parasites]
+                # 3. Signature : Les 2 premiers mots triés par ordre alphabétique
+                # Cela fusionne "Lozano Juan Carlos" et "Lozano Becarra Juan Carlos" sur "BECARRA LOZANO"
+                res = sorted(mots)
+                return " ".join(res[:2]) if res else n.strip()
 
             df_m = df_brut.copy()
             df_m["med_brut"] = df_m.iloc[:, 7]
             df_m["ca"] = pd.to_numeric(df_m.iloc[:, 14], errors="coerce").fillna(0)
             df_m["dt"] = df_m.iloc[:, 2].apply(convertir_date)
-            df_m["signature"] = df_m["med_brut"].apply(normaliser_fusion)
+            df_m["signature"] = df_m["med_brut"].apply(generer_signature)
             df_m = df_m[(df_m["ca"] > 0) & (df_m["dt"].notna()) & (df_m["signature"] != "")].copy()
             
             if not df_m.empty:
-                # Affichage du nom le plus complet du groupe
+                # On choisit le nom le plus long comme référence d'affichage
                 dict_noms = df_m.groupby("signature")["med_brut"].agg(lambda x: max(x.astype(str), key=len)).to_dict()
                 df_m["affichage"] = df_m["signature"].map(dict_noms)
                 
@@ -170,12 +172,11 @@ if uploaded_file:
                 if choix:
                     df_f = df_m[df_m["affichage"].isin(choix)].sort_values("dt")
                     df_f["Mois"] = df_f["dt"].dt.to_period("M").astype(str)
-                    pivot_m = df_f.groupby(["Mois", "affichage"])["ca"].sum().unstack().fillna(0)
-                    st.line_chart(pivot_m)
+                    st.line_chart(df_f.groupby(["Mois", "affichage"])["ca"].sum().unstack().fillna(0))
                     st.subheader("CA Cumulé (CHF)")
                     st.table(df_f.groupby("affichage")["ca"].sum().sort_values(ascending=False).apply(lambda x: f"{x:,.2f} CHF"))
             else:
-                st.warning("Aucun montant > 0 trouvé en colonne O.")
+                st.warning("Aucune donnée exploitable trouvée en colonne O.")
 
     except Exception as e: st.error(f"Erreur : {e}")
 else: st.info("👋 Veuillez charger votre fichier Excel.")
