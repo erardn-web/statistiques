@@ -206,26 +206,101 @@ elif st.session_state.page == "medecins":
         st.session_state.page = "accueil"
         st.rerun()
 
-    st.header("👨‍⚕️ Analyse des Médecins Prescripteurs")
+    st.header("👨‍⚕️ Analyse Performance Médecins")
     uploaded_file = st.sidebar.file_uploader("Charger le fichier Excel (.xlsx)", type="xlsx", key="med_file")
     
     if uploaded_file:
-        df_brut = pd.read_excel(uploaded_file, header=0)
-        df_m = df_brut.copy()
-        df_m["medecin"] = df_m.iloc[:, 7] 
-        df_m["ca"] = pd.to_numeric(df_m.iloc[:, 14], errors="coerce").fillna(0) 
-        df_m["date_f"] = df_m.iloc[:, 2].apply(convertir_date) 
-        df_m = df_m[(df_m["ca"] > 0) & (df_m["date_f"].notna()) & (df_m["medecin"].notna()) & (df_m["medecin"].astype(str).str.strip() != "")].copy()
-        
-        if not df_m.empty:
-            top_global = df_m.groupby("medecin")["ca"].sum().nlargest(10).index.tolist()
-            choix_meds = st.multiselect("🎯 Sélectionner les médecins :", options=sorted(df_m["medecin"].unique().tolist()), default=top_global)
-            if choix_meds:
-                df_final = df_m[df_m["medecin"].isin(choix_meds)].copy()
-                df_final["Mois"] = df_final["date_f"].dt.to_period("M").astype(str)
-                df_final = df_final.sort_values("date_f")
-                pivot_m = df_final.groupby(["Mois", "medecin"])["ca"].sum().unstack().fillna(0)
-                st.line_chart(pivot_m)
-                st.table(df_final.groupby("medecin")["ca"].sum().sort_values(ascending=False).apply(lambda x: f"{x:,.2f} CHF"))
+        try:
+            df_brut = pd.read_excel(uploaded_file, header=0)
+            
+            # --- FILTRE FOURNISSEURS (INDEX 9) ---
+            fourn_med = sorted(df_brut.iloc[:, 9].dropna().unique().tolist())
+            sel_fourn_med = st.sidebar.multiselect("Filtrer par Fournisseur :", fourn_med, default=fourn_med)
+            
+            # --- PRÉPARATION DES DONNÉES ---
+            df_m = df_brut[df_brut.iloc[:, 9].isin(sel_fourn_med)].copy()
+            df_m["medecin"] = df_m.iloc[:, 7] # Colonne H
+            df_m["ca"] = pd.to_numeric(df_m.iloc[:, 14], errors="coerce").fillna(0) # Colonne O
+            df_m["date_f"] = df_m.iloc[:, 2].apply(convertir_date) # Colonne C
+            
+            # Nettoyage
+            df_m = df_m[(df_m["ca"] > 0) & (df_m["date_f"].notna()) & (df_m["medecin"].notna())].copy()
+            
+            if not df_m.empty:
+                # --- CALCULS TEMPORELS ---
+                ajd = pd.Timestamp(datetime.today())
+                trois_mois_ago = ajd - pd.DateOffset(months=3)
+                six_mois_ago = ajd - pd.DateOffset(months=6)
+
+                # 1. CA Global
+                stats_ca = df_m.groupby("medecin")["ca"].sum().reset_index(name="CA Global")
+                
+                # 2. CA 3 derniers mois (Trimestre T)
+                ca_3m = df_m[df_m["date_f"] >= trois_mois_ago].groupby("medecin")["ca"].sum().reset_index(name="CA 3 derniers mois")
+                
+                # 3. CA Trimestre précédent (T-1) pour tendance
+                ca_prev = df_m[(df_m["date_f"] >= six_mois_ago) & (df_m["date_f"] < trois_mois_ago)].groupby("medecin")["ca"].sum().reset_index(name="ca_prev")
+                
+                # Fusion
+                tab_final = stats_ca.merge(ca_3m, on="medecin", how="left").merge(ca_prev, on="medecin", how="left").fillna(0)
+                
+                # Calcul de la Tendance (Seuil 5%)
+                def calculer_tendance(row):
+                    if row["ca_prev"] == 0: return "🟢 Nouveau"
+                    diff = (row["CA 3 derniers mois"] - row["ca_prev"]) / row["ca_prev"]
+                    if diff > 0.05: return "↗️ Hausse"
+                    elif diff < -0.05: return "↘️ Baisse"
+                    else: return "➡️ Stable"
+
+                tab_final["Tendance"] = tab_final.apply(calculer_tendance, axis=1)
+
+                # --- INTERFACE ET GRAPHIQUES ---
+                top_global = tab_final.sort_values("CA Global", ascending=False).head(10)["medecin"].tolist()
+                choix_meds = st.multiselect("🎯 Sélectionner les médecins à analyser :", options=sorted(tab_final["medecin"].unique()), default=top_global)
+                
+                type_graph = st.radio("Type de visualisation :", ["📊 Histogramme (Barres)", "📈 Courbe d'évolution"], horizontal=True)
+
+                if choix_meds:
+                    # Préparation données graphiques
+                    df_plot = df_m[df_m["medecin"].isin(choix_meds)].copy()
+                    df_plot["Mois"] = df_plot["date_f"].dt.to_period("M").astype(str)
+                    df_plot = df_plot.groupby(["Mois", "medecin"])["ca"].sum().reset_index()
+
+                    # Utilisation d'Altair pour les légendes multi-lignes
+                    import altair as alt
+                    
+                    base = alt.Chart(df_plot).encode(
+                        x=alt.X('Mois:O', title='Mois de facturation'),
+                        y=alt.Y('ca:Q', title='Chiffre d\'Affaire (CHF)'),
+                        color=alt.Color('medecin:N', legend=alt.Legend(
+                            orient='bottom',   # Place la légende sous le graphique
+                            columns=4,        # Force l'affichage sur 4 colonnes (plusieurs lignes)
+                            labelLimit=0      # Empêche de tronquer les noms
+                        ))
+                    ).properties(height=450)
+
+                    if "Courbe" in type_graph:
+                        chart = base.mark_line(point=True)
+                    else:
+                        chart = base.mark_bar()
+
+                    st.altair_chart(chart, use_container_width=True)
+
+                    # --- TABLEAU DE SYNTHÈSE ---
+                    st.subheader("Résumé des performances")
+                    tab_display = tab_final[tab_final["medecin"].isin(choix_meds)].sort_values("CA Global", ascending=False)
+                    
+                    st.dataframe(
+                        tab_display[["medecin", "CA Global", "CA 3 derniers mois", "Tendance"]]
+                        .rename(columns={"medecin": "Médecin"}),
+                        use_container_width=True,
+                        hide_index=True
+                    )
+                else:
+                    st.info("Veuillez sélectionner au moins un médecin.")
+            else:
+                st.warning("Aucune donnée de CA exploitable trouvée pour ces fournisseurs.")
+        except Exception as e:
+            st.error(f"Erreur lors du traitement : {e}")
     else:
-        st.info("Veuillez charger un fichier Excel pour l'analyse des médecins.")
+        st.info("👋 Veuillez charger votre fichier Excel pour commencer l'analyse des médecins.")
