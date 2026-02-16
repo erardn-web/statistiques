@@ -71,6 +71,7 @@ if uploaded_file:
         btn_simuler = col_b2.button("🔮 Simuler", use_container_width=True)
 
         # --- NETTOYAGE ET APPLICATION FILTRES ---
+        # Application des filtres Fournisseurs ET Lois
         df = df_brut[
             (df_brut.iloc[:, 9].isin(sel_fournisseurs)) & 
             (df_brut.iloc[:, 4].isin(sel_lois))
@@ -117,8 +118,7 @@ if uploaded_file:
                 st.table(pd.DataFrame(res_sim))
 
         if st.session_state.analyse_lancee:
-            # --- STRUCTURE DES ONGLETS (AJOUT DU 5ème) ---
-            tab1, tab2, tab3, tab4, tab5 = st.tabs(["💰 Liquidités", "🕒 Délais", "⚠️ Retards", "📈 Évolution", "👨‍⚕️ Top Médecins"])
+            tab1, tab2, tab3, tab4 = st.tabs(["💰 Liquidités", "🕒 Délais", "⚠️ Retards", "📈 Évolution"])
 
             for p_name in periods_sel:
                 val = options_p[p_name]
@@ -159,39 +159,49 @@ if uploaded_file:
                     merged["Nb Retards"] = merged["Nb Retards"].astype(int)
                     merged["% Retard"] = (merged["Nb Retards"] / merged["Volume Total"] * 100).round(1)
                     
-                    st.metric(f"Total Retards ({p_name})", f"{int(merged['Nb Retards'].sum())} fact")
-                    st.dataframe(merged.sort_values("% Retard", ascending=False), use_container_width=True)
+                    st.metric(f"Total Retards ({p_name})", f"{int(merged['Nb Retards'].sum())} factures")
+                    st.dataframe(merged[["assureur", "Nb Retards", "Volume Total", "% Retard"]].sort_values("% Retard", ascending=False), use_container_width=True)
 
-                with tab4:
-                    # Ici, le script original s'arrêtait à st.metric pour tab3 dans votre dernier message.
-                    # Je laisse cet espace vide pour que vous puissiez y mettre votre logique tab4 habituelle
-                    # ou je peux la compléter si vous me donnez le contenu exact de votre onglet évolution.
-                    pass
+            with tab4:
+                st.subheader("📈 Évolution du délai de remboursement")
+                ordre_chrono = ["Global", "6 mois", "4 mois", "3 mois", "2 mois"]
+                periodes_graph = {"Global": None, "6 mois": 6, "4 mois": 4, "3 mois": 3, "2 mois": 2}
+                evol_data = []
+                
+                # Top 5 volume
+                p_hist_global = df[df["date_paiement"].notna()].copy()
+                top_assurances = p_hist_global.groupby("assureur").size().sort_values(ascending=False).head(5).index.tolist()
 
-            # --- NOUVELLE FONCTIONNALITÉ MÉDECINS (ONGLET 5) ---
-            with tab5:
-                st.subheader("Top 10 Médecins Prescripteurs (CA généré)")
-                df_med = df_brut.copy()
-                df_med["med_nom"] = df_med.iloc[:, 7].fillna("Inconnu")
-                df_med["ca_reel"] = pd.to_numeric(df_med.iloc[:, 14], errors="coerce").fillna(0)
-                df_med["date_f"] = df_med.iloc[:, 2].apply(convertir_date)
+                for n, v in periodes_graph.items():
+                    lim = ajd - pd.DateOffset(months=v) if v else df["date_facture"].min()
+                    h_tmp = df[(df["date_paiement"].notna()) & (df["date_facture"] >= lim)].copy()
+                    h_tmp["delai"] = (h_tmp["date_paiement"] - h_tmp["date_facture"]).dt.days
+                    if not h_tmp.empty:
+                        m = h_tmp.groupby("assureur")["delai"].mean().reset_index()
+                        m["Période"] = n
+                        evol_data.append(m)
                 
-                # Exclusion des CA nuls
-                df_med = df_med[(df_med["ca_reel"] > 0) & (df_med["date_f"].notna())]
-                
-                if not df_med.empty:
-                    df_med["Mois"] = df_med["date_f"].dt.to_period("M").astype(str)
-                    top_10 = df_med.groupby("med_nom")["ca_reel"].sum().nlargest(10).index
-                    df_plot = df_med[df_med["med_nom"].isin(top_10)]
+                if evol_data:
+                    df_ev = pd.concat(evol_data)
+                    df_pv = df_ev.pivot(index="assureur", columns="Période", values="delai")
+                    cols_presentes = [c for c in ordre_chrono if c in df_pv.columns]
+                    df_pv = df_pv[cols_presentes]
                     
-                    # Graphique en courbe mois par mois
-                    pivot_med = df_plot.groupby(["Mois", "med_nom"])["ca_reel"].sum().unstack().fillna(0)
-                    st.line_chart(pivot_med)
+                    assur_sel = st.multiselect("Sélectionner les assureurs (Top 5 volume pré-sélectionnés) :", 
+                                               options=df_pv.index.tolist(), 
+                                               default=[a for a in top_assurances if a in df_pv.index])
                     
-                    st.write("### Détail cumulé (CHF)")
-                    st.table(df_med.groupby("med_nom")["ca_reel"].sum().sort_values(ascending=False).head(10))
-                else:
-                    st.info("Aucune donnée avec paiement (colonne O) trouvée.")
+                    if assur_sel:
+                        df_plot = df_pv.loc[assur_sel].T
+                        df_plot.index = pd.CategoricalIndex(df_plot.index, categories=ordre_chrono, ordered=True)
+                        df_plot = df_plot.sort_index()
+                        
+                        st.line_chart(df_plot)
+                        st.write("**Détails par période (en jours) :**")
+                        st.caption("🔴 Rouge : Délai max (lent) | 🟢 Vert : Délai min (rapide) pour l'assureur.")
+                        st.dataframe(df_pv.loc[assur_sel].style.highlight_max(axis=1, color='#ff9999').highlight_min(axis=1, color='#99ff99'))
 
     except Exception as e:
         st.error(f"Erreur : {e}")
+else:
+    st.info("👋 Veuillez charger votre fichier Excel.")
