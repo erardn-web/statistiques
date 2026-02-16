@@ -169,26 +169,69 @@ elif st.session_state.page == 'medecins':
         
         df_m = df_brut.copy()
         df_m["medecin"] = df_m.iloc[:, 7].astype(str).str.strip()
+        df_m["fournisseur"] = df_m.iloc[:, 9].astype(str).str.strip() # Ajout colonne fournisseur
         df_m["ca"] = pd.to_numeric(df_m.iloc[:, 14], errors="coerce").fillna(0)
         df_m["date_f"] = df_m.iloc[:, 2].apply(convertir_date)
         
+        # --- FILTRE FOURNISSEUR ---
+        f_list = sorted(df_m["fournisseur"].unique())
+        sel_f = st.sidebar.multiselect("Filtrer par Fournisseur :", f_list, default=f_list)
+        df_m = df_m[df_m["fournisseur"].isin(sel_f)]
+
         df_m = df_m[(df_m["ca"] > 0) & (df_m["date_f"].notna()) & (df_m["medecin"] != "nan")].copy()
         
         if not df_m.empty:
             st.subheader("Paramètres d'affichage")
-            col_t1, col_t2 = st.columns(2)
+            col_t1, col_t2, col_t3 = st.columns([2, 2, 1])
+            
             with col_t1:
                 top_n = st.radio("Top à afficher :", options=[5, 10, 20, 50], index=1, horizontal=True)
-            
-            top_list = df_m.groupby("medecin")["ca"].sum().nlargest(top_n).index.tolist()
+                top_list = df_m.groupby("medecin")["ca"].sum().nlargest(top_n).index.tolist()
             
             with col_t2:
                 choix = st.multiselect("Sélection personnalisée :", sorted(df_m["medecin"].unique()), default=top_list)
             
+            with col_t3:
+                type_chart = st.selectbox("Format graph :", ["Lignes", "Barres"])
+
             if choix:
                 df_f = df_m[df_m["medecin"].isin(choix)].sort_values("date_f")
-                df_f["Mois"] = df_f["date_f"].dt.to_period("M").astype(str)
+                df_f["Mois_p"] = df_f["date_f"].dt.to_period("M")
+                df_f["Mois"] = df_f["Mois_p"].astype(str)
                 
-                st.line_chart(df_f.groupby(["Mois", "medecin"])["ca"].sum().unstack().fillna(0))
-                st.subheader("Classement CA")
-                st.table(df_f.groupby("medecin")["ca"].sum().sort_values(ascending=False).apply(lambda x: f"{x:,.2f} CHF"))
+                # --- GRAPHIQUE ---
+                data_chart = df_f.groupby(["Mois", "medecin"])["ca"].sum().unstack().fillna(0)
+                if type_chart == "Lignes":
+                    st.line_chart(data_chart)
+                else:
+                    st.bar_chart(data_chart)
+                
+                # --- CALCULS TABLEAU ---
+                # 1. CA Total
+                stats = df_f.groupby("medecin")["ca"].sum().to_frame(name="CA Global")
+                
+                # 2. CA 3 derniers mois
+                last_3_months = df_f["Mois_p"].max() - 2
+                ca_3m = df_f[df_f["Mois_p"] >= last_3_months].groupby("medecin")["ca"].sum()
+                stats["CA 3 Derniers Mois"] = ca_3m.reindex(stats.index).fillna(0)
+                
+                # 3. Tendance (Dernier mois vs Moyenne 2 précédents)
+                m_max = df_f["Mois_p"].max()
+                m_prev = [m_max - 1, m_max - 2]
+                
+                def calculer_tendance(name):
+                    ca_actuel = df_f[(df_f["medecin"] == name) & (df_f["Mois_p"] == m_max)]["ca"].sum()
+                    ca_histo = df_f[(df_f["medecin"] == name) & (df_f["Mois_p"].isin(m_prev))]["ca"].sum() / 2
+                    if ca_actuel > ca_histo * 1.05: return "↗️ Hausse"
+                    elif ca_actuel < ca_histo * 0.95: return "↘️ Baisse"
+                    else: return "➡️ Stable"
+
+                stats["Tendance"] = [calculer_tendance(m) for m in stats.index]
+
+                # Affichage final
+                st.subheader("Classement et Analyse")
+                formatted_stats = stats.sort_values("CA Global", ascending=False)
+                st.table(formatted_stats.style.format({
+                    "CA Global": "{:,.2f} CHF",
+                    "CA 3 Derniers Mois": "{:,.2f} CHF"
+                }))
