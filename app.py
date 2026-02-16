@@ -76,7 +76,7 @@ if uploaded_file:
             st.session_state.calcul_medecin_lance = True
             st.session_state.analyse_lancee = False
 
-        # --- LOGIQUE ANALYSE INITIALE (SANS INTERFÉRENCE) ---
+        # --- LOGIQUE ANALYSE INITIALE ---
         if not st.session_state.calcul_medecin_lance:
             df = df_brut[
                 (df_brut.iloc[:, 9].isin(sel_fournisseurs)) & 
@@ -214,12 +214,11 @@ if uploaded_file:
                 st.rerun()
 
             df_m = df_brut.copy()
-            # H (index 7) = Médecin | O (index 14) = CA | C (index 2) = Date Facture
-            df_m["medecin"] = df_m.iloc[:, 7]
-            df_m["ca"] = pd.to_numeric(df_m.iloc[:, 14], errors="coerce").fillna(0)
-            df_m["date_f"] = df_m.iloc[:, 2].apply(convertir_date)
+            df_m["medecin"] = df_m.iloc[:, 7] # Colonne H
+            df_m["ca"] = pd.to_numeric(df_m.iloc[:, 14], errors="coerce").fillna(0) # Colonne O
+            df_m["date_f"] = df_m.iloc[:, 2].apply(convertir_date) # Colonne C
             
-            # Filtre : CA > 0, Date valide et Nom non vide (ignore "Inconnu")
+            # Filtre : CA > 0, Date valide et Nom non vide (ignore les vides)
             df_m = df_m[
                 (df_m["ca"] > 0) & 
                 (df_m["date_f"].notna()) & 
@@ -231,11 +230,10 @@ if uploaded_file:
                 # Top 10 global pour sélection par défaut
                 top_global = df_m.groupby("medecin")["ca"].sum().nlargest(10).index.tolist()
                 
-                st.sidebar.markdown("---")
-                st.sidebar.subheader("🎯 Filtre Médecins")
+                # Filtre directement dans la page
                 liste_noms = sorted(df_m["medecin"].unique().tolist())
-                choix_meds = st.sidebar.multiselect(
-                    "Afficher / Masquer des médecins :", 
+                choix_meds = st.multiselect(
+                    "🎯 Sélectionner les médecins à analyser :", 
                     options=liste_noms, 
                     default=[m for m in top_global if m in liste_noms]
                 )
@@ -244,17 +242,17 @@ if uploaded_file:
                     df_final = df_m[df_m["medecin"].isin(choix_meds)].copy()
                     df_final["Mois"] = df_final["date_f"].dt.to_period("M").astype(str)
                     
-                    # Graphique courbe (trié par date)
+                    # Graphique courbe indépendant (trié chronologiquement)
                     df_final = df_final.sort_values("date_f")
                     pivot_m = df_final.groupby(["Mois", "medecin"])["ca"].sum().unstack().fillna(0)
                     st.line_chart(pivot_m)
                     
-                    st.subheader("CA Cumulé (CHF)")
+                    st.subheader("Classement CA Cumulé (CHF)")
                     st.table(df_final.groupby("medecin")["ca"].sum().sort_values(ascending=False).apply(lambda x: f"{x:,.2f} CHF"))
                 else:
-                    st.info("Sélectionnez au moins un médecin dans la barre latérale.")
+                    st.info("Sélectionnez au moins un médecin ci-dessus.")
             else:
-                st.warning("Aucune donnée exploitable (colonne O > 0 et nom présent).")
+                st.warning("Aucune donnée exploitable (montant reçu en colonne O requis).")
 
     except Exception as e:
         st.error(f"Erreur : {e}")
