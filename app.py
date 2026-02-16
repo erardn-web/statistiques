@@ -8,6 +8,8 @@ st.set_page_config(page_title="Analyseur de Facturation Pro", layout="wide", pag
 # --- INITIALISATION DE L'ÉTAT ---
 if 'analyse_lancee' not in st.session_state:
     st.session_state.analyse_lancee = False
+if 'calcul_medecin_lance' not in st.session_state:
+    st.session_state.calcul_medecin_lance = False
 
 # --- LOGIQUE DE CALCUL ---
 def convertir_date(val):
@@ -70,7 +72,11 @@ if uploaded_file:
             st.session_state.analyse_lancee = True
         btn_simuler = col_b2.button("🔮 Simuler", use_container_width=True)
 
-        # --- NETTOYAGE ET APPLICATION FILTRES ---
+        st.sidebar.markdown("---")
+        if st.sidebar.button("🩺 Calcul Médecins", use_container_width=True):
+            st.session_state.calcul_medecin_lance = True
+
+        # --- LOGIQUE INITIALE (SÉPARÉE) ---
         df = df_brut[
             (df_brut.iloc[:, 9].isin(sel_fournisseurs)) & 
             (df_brut.iloc[:, 4].isin(sel_lois))
@@ -97,8 +103,9 @@ if uploaded_file:
         f_att = df[df["statut"].str.startswith("en attente") & (df["statut"] != "en attente (annulé)")].copy()
         f_att["delai_actuel"] = (ajd - f_att["date_facture"]).dt.days
         
-        st.metric("💰 TOTAL BRUT EN ATTENTE", f"{f_att['montant'].sum():,.2f} CHF")
-        st.markdown("---")
+        if not st.session_state.calcul_medecin_lance:
+            st.metric("💰 TOTAL BRUT EN ATTENTE", f"{f_att['montant'].sum():,.2f} CHF")
+            st.markdown("---")
 
         if btn_simuler:
             jours_delta = (pd.Timestamp(date_cible) - ajd).days
@@ -116,9 +123,8 @@ if uploaded_file:
                     res_sim.append({"Période": p_nom, "Estimation (CHF)": f"{round(liq[jours_delta]):,}", "Probabilité": f"{t[jours_delta]:.1%}"})
                 st.table(pd.DataFrame(res_sim))
 
-        if st.session_state.analyse_lancee:
-            # ON AJOUTE LE 5ème ONGLET ICI
-            tab1, tab2, tab3, tab4, tab5 = st.tabs(["💰 Liquidités", "🕒 Délais", "⚠️ Retards", "📈 Évolution", "👨‍⚕️ Top Médecins"])
+        if st.session_state.analyse_lancee and not st.session_state.calcul_medecin_lance:
+            tab1, tab2, tab3, tab4 = st.tabs(["💰 Liquidités", "🕒 Délais", "⚠️ Retards", "📈 Évolution"])
 
             for p_name in periods_sel:
                 val = options_p[p_name]
@@ -169,33 +175,36 @@ if uploaded_file:
                         evol = p_hist.groupby("mois")["delai"].mean()
                         st.line_chart(evol)
 
-            # --- NOUVEL ONGLET TOP MÉDECINS (TOTALEMENT INDÉPENDANT) ---
-            with tab5:
-                st.subheader("Top 10 Médecins Prescripteurs (CA généré)")
-                # Utilisation de df_brut pour ne rien casser
-                df_m_onglet = df_brut.copy()
-                df_m_onglet["medecin_col"] = df_m_onglet.iloc[:, 7].fillna("Inconnu")
-                df_m_onglet["ca_col"] = pd.to_numeric(df_m_onglet.iloc[:, 14], errors="coerce").fillna(0)
-                df_m_onglet["date_f_col"] = df_m_onglet.iloc[:, 2].apply(convertir_date)
+        # --- LOGIQUE MÉDECINS (TOTALEMENT DÉCONNECTÉE) ---
+        if st.session_state.calcul_medecin_lance:
+            st.header("👨‍⚕️ Analyse des Médecins Prescripteurs")
+            if st.button("⬅️ Retour à l'analyse principale"):
+                st.session_state.calcul_medecin_lance = False
+                st.rerun()
+
+            df_m = df_brut.copy()
+            df_m["medecin"] = df_m.iloc[:, 7].fillna("Inconnu")
+            df_m["ca"] = pd.to_numeric(df_m.iloc[:, 14], errors="coerce").fillna(0)
+            df_m["date_f"] = df_m.iloc[:, 2].apply(convertir_date)
+            
+            # Application de la règle : CA (colonne O) non nul
+            df_m = df_m[(df_m["ca"] > 0) & (df_m["date_f"].notna())]
+            
+            if not df_m.empty:
+                df_m["Mois"] = df_m["date_f"].dt.to_period("M").astype(str)
+                top_10 = df_m.groupby("medecin")["ca"].sum().nlargest(10).index
+                df_top = df_m[df_m["medecin"].isin(top_10)]
                 
-                # Filtre : CA > 0 et date ok
-                df_m_onglet = df_m_onglet[(df_m_onglet["ca_col"] > 0) & (df_m_onglet["date_f_col"].notna())]
+                # Graphique en courbe indépendant
+                pivot_m = df_top.groupby(["Mois", "medecin"])["ca"].sum().unstack().fillna(0)
+                st.line_chart(pivot_m)
                 
-                if not df_m_onglet.empty:
-                    df_m_onglet["Mois"] = df_m_onglet["date_f_col"].dt.to_period("M").astype(str)
-                    top_noms = df_m_onglet.groupby("medecin_col")["ca_col"].sum().nlargest(10).index
-                    df_top_plot = df_m_onglet[df_m_onglet["medecin_col"].isin(top_noms)]
-                    
-                    # Graphique en courbe indépendant
-                    pivot_m = df_top_plot.groupby(["Mois", "medecin_col"])["ca_col"].sum().unstack().fillna(0)
-                    st.line_chart(pivot_m)
-                    
-                    st.write("### Classement cumulé (CHF)")
-                    st.table(df_m_onglet.groupby("medecin_col")["ca_col"].sum().sort_values(ascending=False).head(10))
-                else:
-                    st.info("Aucune donnée de paiement (colonne O) trouvée.")
+                st.subheader("Classement CA par médecin (Top 10)")
+                st.table(df_m.groupby("medecin")["ca"].sum().sort_values(ascending=False).head(10).apply(lambda x: f"{x:,.2f} CHF"))
+            else:
+                st.warning("Aucune donnée de paiement (valeur > 0 en colonne O) trouvée.")
 
     except Exception as e:
-        st.error(f"Erreur : {e}")
+        st.error(f"Une erreur est survenue : {e}")
 else:
-    st.info("Veuillez charger un fichier Excel (.xlsx).")
+    st.info("Veuillez charger un fichier Excel (.xlsx) pour commencer.")
