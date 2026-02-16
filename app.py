@@ -50,11 +50,9 @@ if uploaded_file:
         # --- FILTRES (SIDEBAR) ---
         st.sidebar.header("🔍 2. Filtres")
         
-        # Filtre Fournisseurs (Colonne J / Index 9)
         fournisseurs = df_brut.iloc[:, 9].dropna().unique().tolist()
         sel_fournisseurs = st.sidebar.multiselect("Fournisseurs :", options=sorted(fournisseurs), default=fournisseurs)
         
-        # Filtre Lois (Colonne E / Index 4)
         lois = df_brut.iloc[:, 4].dropna().unique().tolist()
         sel_lois = st.sidebar.multiselect("Types de Loi :", options=sorted(lois), default=lois)
         
@@ -78,7 +76,7 @@ if uploaded_file:
             st.session_state.calcul_medecin_lance = True
             st.session_state.analyse_lancee = False
 
-        # --- BLOC ANALYSE INITIALE (CONSERVÉ À 100%) ---
+        # --- LOGIQUE ANALYSE INITIALE (SANS INTERFÉRENCE) ---
         if not st.session_state.calcul_medecin_lance:
             df = df_brut[
                 (df_brut.iloc[:, 9].isin(sel_fournisseurs)) & 
@@ -208,35 +206,55 @@ if uploaded_file:
                             st.caption("🔴 Rouge : Délai max (lent) | 🟢 Vert : Délai min (rapide) pour l'assureur.")
                             st.dataframe(df_pv.loc[assur_sel].style.highlight_max(axis=1, color='#ff9999').highlight_min(axis=1, color='#99ff99'))
 
-        # --- NOUVELLE FONCTIONNALITÉ MÉDECINS (INDÉPENDANTE) ---
+        # --- FONCTIONNALITÉ MÉDECINS (TOTALE DÉCONNEXION) ---
         if st.session_state.calcul_medecin_lance:
-            st.header("👨‍⚕️ Analyse des 10 plus gros Médecins Prescripteurs")
+            st.header("👨‍⚕️ Top Médecins Prescripteurs (CA encaissé)")
             if st.button("⬅️ Retour"):
                 st.session_state.calcul_medecin_lance = False
                 st.rerun()
 
-            df_med = df_brut.copy()
-            # H = index 7 (médecin), O = index 14 (CA), C = index 2 (date facture)
-            df_med["nom_m"] = df_med.iloc[:, 7].fillna("Inconnu")
-            df_med["ca_m"] = pd.to_numeric(df_med.iloc[:, 14], errors="coerce").fillna(0)
-            df_med["dt_m"] = df_med.iloc[:, 2].apply(convertir_date)
+            df_m = df_brut.copy()
+            # H (index 7) = Médecin | O (index 14) = CA | C (index 2) = Date Facture
+            df_m["medecin"] = df_m.iloc[:, 7]
+            df_m["ca"] = pd.to_numeric(df_m.iloc[:, 14], errors="coerce").fillna(0)
+            df_m["date_f"] = df_m.iloc[:, 2].apply(convertir_date)
             
-            # Filtre : CA (Col O) > 0 uniquement
-            df_med = df_med[(df_med["ca_m"] > 0) & (df_med["dt_m"].notna())]
+            # Filtre : CA > 0, Date valide et Nom non vide (ignore "Inconnu")
+            df_m = df_m[
+                (df_m["ca"] > 0) & 
+                (df_m["date_f"].notna()) & 
+                (df_m["medecin"].notna()) & 
+                (df_m["medecin"].astype(str).str.strip() != "")
+            ].copy()
             
-            if not df_med.empty:
-                df_med["Mois"] = df_med["dt_m"].dt.to_period("M").astype(str)
-                top_10_names = df_med.groupby("nom_m")["ca_m"].sum().nlargest(10).index
-                df_top = df_med[df_med["nom_m"].isin(top_10_names)]
+            if not df_m.empty:
+                # Top 10 global pour sélection par défaut
+                top_global = df_m.groupby("medecin")["ca"].sum().nlargest(10).index.tolist()
                 
-                # Graphique en courbe indépendant
-                pivot_m = df_top.groupby(["Mois", "nom_m"])["ca_m"].sum().unstack().fillna(0)
-                st.line_chart(pivot_m)
+                st.sidebar.markdown("---")
+                st.sidebar.subheader("🎯 Filtre Médecins")
+                liste_noms = sorted(df_m["medecin"].unique().tolist())
+                choix_meds = st.sidebar.multiselect(
+                    "Afficher / Masquer des médecins :", 
+                    options=liste_noms, 
+                    default=[m for m in top_global if m in liste_noms]
+                )
                 
-                st.subheader("Classement CA cumulé (CHF)")
-                st.table(df_med.groupby("nom_m")["ca_m"].sum().sort_values(ascending=False).head(10).apply(lambda x: f"{x:,.2f} CHF"))
+                if choix_meds:
+                    df_final = df_m[df_m["medecin"].isin(choix_meds)].copy()
+                    df_final["Mois"] = df_final["date_f"].dt.to_period("M").astype(str)
+                    
+                    # Graphique courbe (trié par date)
+                    df_final = df_final.sort_values("date_f")
+                    pivot_m = df_final.groupby(["Mois", "medecin"])["ca"].sum().unstack().fillna(0)
+                    st.line_chart(pivot_m)
+                    
+                    st.subheader("CA Cumulé (CHF)")
+                    st.table(df_final.groupby("medecin")["ca"].sum().sort_values(ascending=False).apply(lambda x: f"{x:,.2f} CHF"))
+                else:
+                    st.info("Sélectionnez au moins un médecin dans la barre latérale.")
             else:
-                st.warning("Aucune donnée avec paiement trouvé en colonne O.")
+                st.warning("Aucune donnée exploitable (colonne O > 0 et nom présent).")
 
     except Exception as e:
         st.error(f"Erreur : {e}")
