@@ -73,7 +73,7 @@ if uploaded_file:
             st.session_state.calcul_medecin_lance = True
             st.session_state.analyse_lancee = False
 
-        # --- LOGIQUE ANALYSE INITIALE (CONSERVÉE) ---
+        # --- LOGIQUE ANALYSE INITIALE ---
         if not st.session_state.calcul_medecin_lance:
             df = df_brut[(df_brut.iloc[:, 9].isin(sel_fournisseurs)) & (df_brut.iloc[:, 4].isin(sel_lois))].copy()
             df = df.rename(columns={
@@ -120,7 +120,7 @@ if uploaded_file:
                         st.dataframe(merged.sort_values("% Retard", ascending=False), use_container_width=True)
                 with tab4:
                     st.subheader("📈 Évolution du délai de remboursement")
-                    # Logique Tab4 originale respectée
+                    # Logique Tab4 conservée
                     ordre_chrono = ["Global", "6 mois", "4 mois", "3 mois", "2 mois"]
                     periodes_graph = {"Global": None, "6 mois": 6, "4 mois": 4, "3 mois": 3, "2 mois": 2}
                     evol_data = []
@@ -132,45 +132,50 @@ if uploaded_file:
                         if not h_tmp.empty:
                             m = h_tmp.groupby("assureur")["delai"].mean().reset_index(); m["Période"] = n; evol_data.append(m)
                     if evol_data:
-                        df_ev = pd.concat(evol_data).pivot(index="assureur", columns="Période", values="delai")[[c for c in ordre_chrono if c in pd.concat(evol_data).pivot(index="assureur", columns="Période", values="delai").columns]]
+                        df_ev = pd.concat(evol_data).pivot(index="assureur", columns="Période", values="delai")
                         assur_sel = st.multiselect("Sélectionner les assureurs :", options=df_ev.index.tolist(), default=[a for a in top_assurances if a in df_ev.index])
                         if assur_sel:
-                            st.line_chart(df_ev.loc[assur_sel].T.sort_index())
+                            st.line_chart(df_ev.loc[assur_sel].T.reindex(ordre_chrono).dropna(how='all'))
 
-        # --- NOUVELLE FONCTIONNALITÉ MÉDECINS (FUSION INTELLIGENTE) ---
+        # --- NOUVELLE FONCTIONNALITÉ MÉDECINS (FUSION PAR MOTS-CLÉS) ---
         if st.session_state.calcul_medecin_lance:
-            st.header("👨‍⚕️ Analyse des Médecins & Institutions (Données Groupées)")
+            st.header("👨‍⚕️ Analyse des Médecins & Institutions (Fusion Intelligente)")
             if st.button("⬅️ Retour"): st.session_state.calcul_medecin_lance = False; st.rerun()
 
-            def extraire_tronc_commun(nom):
+            def normaliser_fusion(nom):
                 if pd.isna(nom) or str(nom).strip() == "": return ""
+                # Nettoyage : On enlève tout sauf lettres/chiffres
                 n = re.sub(r'[^\w\s]', ' ', str(nom).upper())
-                # On garde les mots significatifs (>3 lettres) pour fusionner Lozano J. et Lozano Juan
-                mots = [m.strip() for m in n.split() if len(m.strip()) > 3]
-                return " ".join(mots[:2]) if mots else n.split()[0].upper() if n.split() else ""
+                # On garde les mots longs (>3 lettres) et on les trie
+                # Cela fusionne "Lozano Juan Carlos" et "Lozano Becarra Juan Carlos"
+                mots_cles = sorted([m.strip() for m in n.split() if len(m.strip()) > 3])
+                # On retourne les 3 premiers mots triés comme signature unique
+                return " ".join(mots_cles[:3]) if mots_cles else n.strip()
 
             df_m = df_brut.copy()
             df_m["med_brut"] = df_m.iloc[:, 7]
             df_m["ca"] = pd.to_numeric(df_m.iloc[:, 14], errors="coerce").fillna(0)
             df_m["dt"] = df_m.iloc[:, 2].apply(convertir_date)
-            df_m["groupe"] = df_m["med_brut"].apply(extraire_tronc_commun)
-            df_m = df_m[(df_m["ca"] > 0) & (df_m["dt"].notna()) & (df_m["groupe"] != "")].copy()
+            df_m["signature"] = df_m["med_brut"].apply(normaliser_fusion)
+            df_m = df_m[(df_m["ca"] > 0) & (df_m["dt"].notna()) & (df_m["signature"] != "")].copy()
             
             if not df_m.empty:
-                # Mapping pour afficher le nom le plus fréquent/représentatif du groupe
-                noms_clairs = df_m.groupby("groupe")["med_brut"].agg(lambda x: x.value_counts().index[0]).to_dict()
-                df_m["affichage"] = df_m["groupe"].map(noms_clairs)
+                # Affichage du nom le plus complet du groupe
+                dict_noms = df_m.groupby("signature")["med_brut"].agg(lambda x: max(x.astype(str), key=len)).to_dict()
+                df_m["affichage"] = df_m["signature"].map(dict_noms)
                 
-                choix = st.multiselect("🎯 Sélectionner les prescripteurs :", options=sorted(df_m["affichage"].unique()), default=df_m.groupby("affichage")["ca"].sum().nlargest(10).index.tolist())
+                liste_meds = sorted(df_m["affichage"].unique())
+                choix = st.multiselect("🎯 Sélectionner les prescripteurs :", options=liste_meds, default=df_m.groupby("affichage")["ca"].sum().nlargest(10).index.tolist())
                 
                 if choix:
                     df_f = df_m[df_m["affichage"].isin(choix)].sort_values("dt")
                     df_f["Mois"] = df_f["dt"].dt.to_period("M").astype(str)
-                    st.line_chart(df_f.groupby(["Mois", "affichage"])["ca"].sum().unstack().fillna(0))
+                    pivot_m = df_f.groupby(["Mois", "affichage"])["ca"].sum().unstack().fillna(0)
+                    st.line_chart(pivot_m)
                     st.subheader("CA Cumulé (CHF)")
                     st.table(df_f.groupby("affichage")["ca"].sum().sort_values(ascending=False).apply(lambda x: f"{x:,.2f} CHF"))
             else:
-                st.warning("Aucun chiffre d'affaires trouvé en colonne O.")
+                st.warning("Aucun montant > 0 trouvé en colonne O.")
 
     except Exception as e: st.error(f"Erreur : {e}")
 else: st.info("👋 Veuillez charger votre fichier Excel.")
