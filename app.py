@@ -42,15 +42,20 @@ def calculer_liquidites_fournisseur(f_attente, p_hist, jours_horizons):
 if st.session_state.page == "accueil":
     st.title("🏥 Assistant d'Analyse de Facturation")
     st.markdown("---")
-    st.write("Choisissez le module d'analyse souhaité :")
+    st.write("### Choisissez le module d'analyse souhaité :")
     
     col1, col2 = st.columns(2)
     with col1:
-        if st.button("📊 ANALYSE FACTURATION\n(Liquidités, Délais, Retards)", use_container_width=True, height=200):
+        st.info("📊 **MODULE FACTURATION**")
+        st.write("Analyse des liquidités, des délais de paiement par assureur et des retards.")
+        if st.button("Accéder à l'Analyse Facturation", use_container_width=True):
             st.session_state.page = "factures"
             st.rerun()
+            
     with col2:
-        if st.button("🩺 ANALYSE MÉDECINS\n(CA Encaissé, Prescriptions)", use_container_width=True, height=200):
+        st.success("🩺 **MODULE MÉDECINS**")
+        st.write("Analyse du CA encaissé par médecin prescripteur et évolution temporelle.")
+        if st.button("Accéder à l'Analyse Médecins", use_container_width=True):
             st.session_state.page = "medecins"
             st.rerun()
 
@@ -69,7 +74,6 @@ elif st.session_state.page == "factures":
         try:
             df_brut = pd.read_excel(uploaded_file, header=0)
             
-            # --- FILTRES SIDEBAR ---
             st.sidebar.header("🔍 Configuration")
             fournisseurs = df_brut.iloc[:, 9].dropna().unique().tolist()
             sel_fournisseurs = st.sidebar.multiselect("Fournisseurs :", options=sorted(fournisseurs), default=fournisseurs)
@@ -127,7 +131,6 @@ elif st.session_state.page == "factures":
 
             if st.session_state.analyse_lancee:
                 tab1, tab2, tab3, tab4 = st.tabs(["💰 Liquidités", "🕒 Délais", "⚠️ Retards", "📈 Évolution"])
-                
                 for p_name in periods_sel:
                     val = options_p[p_name]
                     limit_p = ajd - pd.DateOffset(months=val) if val else df["date_facture"].min()
@@ -193,7 +196,7 @@ elif st.session_state.page == "factures":
         except Exception as e:
             st.error(f"Erreur d'analyse : {e}")
     else:
-        st.info("Veuillez charger un fichier Excel pour commencer l'analyse des factures.")
+        st.info("Veuillez charger un fichier Excel pour l'analyse des factures.")
 
 # ==========================================
 # 👨‍⚕️ MODULE MÉDECINS
@@ -212,24 +215,17 @@ elif st.session_state.page == "medecins":
         df_m["medecin"] = df_m.iloc[:, 7] 
         df_m["ca"] = pd.to_numeric(df_m.iloc[:, 14], errors="coerce").fillna(0) 
         df_m["date_f"] = df_m.iloc[:, 2].apply(convertir_date) 
-        
         df_m = df_m[(df_m["ca"] > 0) & (df_m["date_f"].notna()) & (df_m["medecin"].notna()) & (df_m["medecin"].astype(str).str.strip() != "")].copy()
         
         if not df_m.empty:
             top_global = df_m.groupby("medecin")["ca"].sum().nlargest(10).index.tolist()
             choix_meds = st.multiselect("🎯 Sélectionner les médecins :", options=sorted(df_m["medecin"].unique().tolist()), default=top_global)
-            
             if choix_meds:
                 df_final = df_m[df_m["medecin"].isin(choix_meds)].copy()
                 df_final["Mois"] = df_final["date_f"].dt.to_period("M").astype(str)
                 df_final = df_final.sort_values("date_f")
                 pivot_m = df_final.groupby(["Mois", "medecin"])["ca"].sum().unstack().fillna(0)
                 st.line_chart(pivot_m)
-                st.subheader("Classement CA Cumulé (CHF)")
                 st.table(df_final.groupby("medecin")["ca"].sum().sort_values(ascending=False).apply(lambda x: f"{x:,.2f} CHF"))
-            else:
-                st.info("Sélectionnez au moins un médecin.")
-        else:
-            st.warning("Aucune donnée de CA encaissé (colonne O) trouvée.")
     else:
         st.info("Veuillez charger un fichier Excel pour l'analyse des médecins.")
