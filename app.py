@@ -199,107 +199,94 @@ elif st.session_state.page == "factures":
         st.info("Veuillez charger un fichier Excel pour l'analyse des factures.")
 
 # ==========================================
-# 👨‍⚕️ MODULE MÉDECINS (TOP DANS LA PAGE)
+# 👨‍⚕️ MODULE MÉDECINS (LOGIQUE TENDANCE 90j/365j)
 # ==========================================
 elif st.session_state.page == "medecins":
+    st.markdown("<style>.block-container { padding-left: 1rem; padding-right: 1rem; max-width: 100%; }</style>", unsafe_allow_html=True)
     if st.sidebar.button("⬅️ Retour Accueil"):
         st.session_state.page = "accueil"
         st.rerun()
 
-    st.header("👨‍⚕️ Analyse Performance Médecins")
-    uploaded_file = st.sidebar.file_uploader("Charger le fichier Excel (.xlsx)", type="xlsx", key="med_file")
+    st.header("👨‍⚕️ Performance Médecins")
+    uploaded_file = st.sidebar.file_uploader("Fichier Excel", type="xlsx", key="med_up")
     
     if uploaded_file:
         try:
             df_brut = pd.read_excel(uploaded_file, header=0)
-            
-            # --- FILTRE FOURNISSEURS (SIDEBAR) ---
             fourn_med = sorted(df_brut.iloc[:, 9].dropna().unique().tolist())
-            sel_fourn_med = st.sidebar.multiselect("Filtrer par Fournisseur :", fourn_med, default=fourn_med)
+            sel_fourn_med = st.sidebar.multiselect("Fournisseurs :", fourn_med, default=fourn_med)
             
-            # --- PRÉPARATION DES DONNÉES ---
             df_m = df_brut[df_brut.iloc[:, 9].isin(sel_fourn_med)].copy()
-            df_m["medecin"] = df_m.iloc[:, 7] 
-            df_m["ca"] = pd.to_numeric(df_m.iloc[:, 14], errors="coerce").fillna(0) 
-            df_m["date_f"] = df_m.iloc[:, 2].apply(convertir_date) 
+            df_m["medecin"] = df_m.iloc[:, 7]
+            df_m["ca"] = pd.to_numeric(df_m.iloc[:, 14], errors="coerce").fillna(0)
+            df_m["date_f"] = df_m.iloc[:, 2].apply(convertir_date)
             df_m = df_m[(df_m["ca"] > 0) & (df_m["date_f"].notna()) & (df_m["medecin"].notna())].copy()
             
             if not df_m.empty:
                 ajd = pd.Timestamp(datetime.today())
-                trois_mois_ago = ajd - pd.DateOffset(months=3)
-                six_mois_ago = ajd - pd.DateOffset(months=6)
+                t_90j = ajd - pd.DateOffset(days=90)
+                t_365j = ajd - pd.DateOffset(days=365)
 
-                # Calculs CA et Tendance
+                # 1. CA Global (toute la période du fichier)
                 stats_ca = df_m.groupby("medecin")["ca"].sum().reset_index(name="CA Global")
-                ca_3m = df_m[df_m["date_f"] >= trois_mois_ago].groupby("medecin")["ca"].sum().reset_index(name="CA 3 derniers mois")
-                ca_prev = df_m[(df_m["date_f"] >= six_mois_ago) & (df_m["date_f"] < trois_mois_ago)].groupby("medecin")["ca"].sum().reset_index(name="ca_prev")
                 
-                tab_final = stats_ca.merge(ca_3m, on="medecin", how="left").merge(ca_prev, on="medecin", how="left").fillna(0)
+                # 2. CA 90 derniers jours
+                ca_90 = df_m[df_m["date_f"] >= t_90j].groupby("medecin")["ca"].sum().reset_index(name="CA 90j")
                 
-                def calculer_tendance(row):
-                    if row["ca_prev"] == 0: return "🟢 Nouveau"
-                    diff = (row["CA 3 derniers mois"] - row["ca_prev"]) / row["ca_prev"]
-                    if diff > 0.05: return "↗️ Hausse"
-                    elif diff < -0.05: return "↘️ Baisse"
-                    else: return "➡️ Stable"
-                tab_final["Tendance"] = tab_final.apply(calculer_tendance, axis=1)
-
-                # --- SÉLECTION DU TOP (DANS LA PAGE) ---
-                st.markdown("### 🏆 Sélection et Visualisation")
-                col_top, col_type = st.columns([1, 2])
+                # 3. CA 365 derniers jours
+                ca_365 = df_m[df_m["date_f"] >= t_365j].groupby("medecin")["ca"].sum().reset_index(name="CA 365j")
                 
-                with col_top:
-                    mode_top = st.selectbox("Afficher le Top :", [5, 10, 25, 50, "Tout"], index=1)
-                
-                with col_type:
-                    type_graph = st.radio("Type de visualisation :", ["📊 Barres", "📈 Courbes"], horizontal=True)
+                # Fusion des données
+                tab_final = stats_ca.merge(ca_90, on="medecin", how="left").merge(ca_365, on="medecin", how="left").fillna(0)
 
-                # Définition de la présélection dynamique
-                tab_sorted = tab_final.sort_values("CA Global", ascending=False)
-                if mode_top == "Tout":
-                    default_selection = tab_sorted["medecin"].tolist()
-                else:
-                    default_selection = tab_sorted.head(int(mode_top))["medecin"].tolist()
-
-                # Champ de sélection multi-critères
-                choix_meds = st.multiselect("🎯 Affiner la sélection des médecins :", options=sorted(tab_final["medecin"].unique()), default=default_selection)
-
-                if choix_meds:
-                    # Préparation données graphiques
-                    df_plot = df_m[df_m["medecin"].isin(choix_meds)].copy()
-                    df_plot["Mois"] = df_plot["date_f"].dt.to_period("M").astype(str)
-                    df_plot = df_plot.groupby(["Mois", "medecin"])["ca"].sum().reset_index()
-
-                    import altair as alt
-                    base = alt.Chart(df_plot).encode(
-                        x=alt.X('Mois:O', title='Période'),
-                        y=alt.Y('ca:Q', title='CA (CHF)'),
-                        color=alt.Color('medecin:N', legend=alt.Legend(
-                            orient='bottom', 
-                            columns=4, 
-                            labelLimit=0,
-                            title="Médecins"
-                        ))
-                    ).properties(height=450)
-
-                    chart = base.mark_line(point=True) if "Courbes" in type_graph else base.mark_bar()
-                    st.altair_chart(chart, use_container_width=True)
-
-                    # --- TABLEAU RÉSUMÉ ---
-                    st.subheader("📊 Résumé des performances")
-                    tab_display = tab_final[tab_final["medecin"].isin(choix_meds)].sort_values("CA Global", ascending=False)
+                # --- NOUVELLE LOGIQUE DE TENDANCE ---
+                def calc_tendance_ratio(row):
+                    if row["CA 365j"] <= 0: return "⚪ Inconnu"
+                    ratio = (row["CA 90j"] / row["CA 365j"]) * 100
                     
+                    if ratio <= 23:
+                        return f"↘️ Baisse ({ratio:.1f}%)"
+                    elif 23 < ratio < 27:
+                        return f"➡️ Stable ({ratio:.1f}%)"
+                    else: # ratio >= 27
+                        return f"↗️ Hausse ({ratio:.1f}%)"
+
+                tab_final["Tendance (Vitalité)"] = tab_final.apply(calc_tendance_ratio, axis=1)
+
+                st.markdown("### 🏆 Sélection et Visualisation")
+                c1, c2 = st.columns()
+                with c1: m_top = st.selectbox("Afficher le Top :", [5, 10, 25, 50, "Tout"], index=1)
+                with c2: t_graph = st.radio("Style :", ["📊 Barres", "📈 Courbes"], horizontal=True)
+
+                tab_s = tab_final.sort_values("CA Global", ascending=False)
+                def_sel = tab_s["medecin"].tolist() if m_top == "Tout" else tab_s.head(int(m_top))["medecin"].tolist()
+                choix = st.multiselect("Affiner la sélection :", options=sorted(tab_final["medecin"].unique()), default=def_sel)
+
+                if choix:
+                    df_p = df_m[df_m["medecin"].isin(choix)].copy()
+                    df_p["Mois"] = df_p["date_f"].dt.to_period("M").astype(str)
+                    df_p = df_p.groupby(["Mois", "medecin"])["ca"].sum().reset_index()
+
+                    chart_base = alt.Chart(df_p).encode(
+                        x=alt.X('Mois:O', title="Mois"),
+                        y=alt.Y('ca:Q', title="CA encaissé (CHF)"),
+                        color=alt.Color('medecin:N', legend=alt.Legend(orient='bottom', columns=5, labelLimit=0))
+                    ).properties(height=600)
+                    
+                    st.altair_chart(chart_base.mark_line(point=True) if "Courbes" in t_graph else chart_base.mark_bar(), use_container_width=True)
+                    
+                    # Affichage du tableau final
+                    st.subheader("📊 Détails et Vitalité (90j vs 365j)")
+                    cols_finales = ["medecin", "CA Global", "CA 365j", "CA 90j", "Tendance (Vitalité)"]
                     st.dataframe(
-                        tab_display[["medecin", "CA Global", "CA 3 derniers mois", "Tendance"]]
-                        .rename(columns={"medecin": "Médecin"}), 
+                        tab_final[tab_final["medecin"].isin(choix)]
+                        .sort_values("CA Global", ascending=False)[cols_finales]
+                        .style.format({"CA Global": "{:,.2f}", "CA 365j": "{:,.2f}", "CA 90j": "{:,.2f}"}),
                         use_container_width=True, 
                         hide_index=True
                     )
-                else:
-                    st.info("Sélectionnez au moins un médecin pour afficher les données.")
             else:
-                st.warning("Aucune donnée encaissée trouvée avec les filtres actuels.")
-        except Exception as e:
-            st.error(f"Erreur technique : {e}")
-    else:
-        st.info("👋 Veuillez charger votre fichier Excel dans la barre latérale pour analyser les médecins.")
+                st.warning("Aucune donnée trouvée pour ces fournisseurs.")
+        except Exception as e: st.error(f"Erreur : {e}")
+
+
