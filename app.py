@@ -2,14 +2,16 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime
 
-# --- CONFIGURATION PAGE ---
-st.set_page_config(page_title="Analyseur Pro Hospitalier", layout="wide", page_icon="🏥")
+# --- CONFIGURATION PAGE WEB ---
+st.set_page_config(page_title="Analyseur de Facturation Pro", layout="wide", page_icon="🏥")
 
-# --- INITIALISATION DE LA NAVIGATION ---
-if 'page' not in st.session_state:
-    st.session_state.page = 'accueil'
+# --- INITIALISATION DE L'ÉTAT ---
+if 'analyse_lancee' not in st.session_state:
+    st.session_state.analyse_lancee = False
+if 'calcul_medecin_lance' not in st.session_state:
+    st.session_state.calcul_medecin_lance = False
 
-# --- LOGIQUE TECHNIQUE COMMUNE ---
+# --- LOGIQUE DE CALCUL ---
 def convertir_date(val):
     if pd.isna(val) or str(val).strip() == "": return pd.NaT
     if isinstance(val, pd.Timestamp): return val
@@ -34,54 +36,54 @@ def calculer_liquidites_fournisseur(f_attente, p_hist, jours_horizons):
         liq[h] = total_h
     return liq, taux_glob
 
-# ==========================================
-# 1. PAGE D'ACCUEIL
-# ==========================================
-if st.session_state.page == 'accueil':
-    st.title("🏥 Plateforme d'Analyse Hospitalière")
-    st.markdown("---")
-    st.write("### Sélectionnez le module d'analyse :")
-    
-    col1, col2 = st.columns(2)
-    with col1:
-        st.info("#### 📊 Analyse de Facturation\nDélais, liquidités et retards assureurs.")
-        if st.button("Lancer la Facturation", type="primary", use_container_width=True):
-            st.session_state.page = 'facturation'
-            st.rerun()
+# --- INTERFACE ---
+st.title("🏥 Analyseur de Facturation Suisse")
+st.markdown("---")
 
-    with col2:
-        st.success("#### 🩺 Analyse Médecins\nCA prescripteurs, tendances et performance 3 mois.")
-        if st.button("Lancer l'Analyse Médecins", type="primary", use_container_width=True):
-            st.session_state.page = 'medecins'
-            st.rerun()
+st.sidebar.header("📁 1. Importation")
+uploaded_file = st.sidebar.file_uploader("Charger le fichier Excel (.xlsx)", type="xlsx")
 
-# ==========================================
-# 2. PAGE : ANALYSE FACTURATION (MODULE INITIAL)
-# ==========================================
-elif st.session_state.page == 'facturation':
-    if st.sidebar.button("⬅️ Retour Accueil"):
-        st.session_state.page = 'accueil'
-        st.rerun()
+if uploaded_file:
+    try:
+        df_brut = pd.read_excel(uploaded_file, header=0)
+        
+        # --- FILTRES (SIDEBAR) ---
+        st.sidebar.header("🔍 2. Filtres")
+        fournisseurs = df_brut.iloc[:, 9].dropna().unique().tolist()
+        sel_fournisseurs = st.sidebar.multiselect("Fournisseurs :", options=sorted(fournisseurs), default=fournisseurs)
+        
+        lois = df_brut.iloc[:, 4].dropna().unique().tolist()
+        sel_lois = st.sidebar.multiselect("Types de Loi :", options=sorted(lois), default=lois)
+        
+        st.sidebar.header("📊 3. Options Délais")
+        show_med = st.sidebar.checkbox("Afficher la Médiane", value=True)
+        show_std = st.sidebar.checkbox("Afficher l'Écart-type", value=True)
+        
+        st.sidebar.header("📅 4. Périodes & Simulation")
+        options_p = {"Global": None, "6 mois": 6, "4 mois": 4, "3 mois": 3, "2 mois": 2, "1 mois": 1}
+        periods_sel = st.sidebar.multiselect("Analyser les périodes :", list(options_p.keys()), default=["Global", "4 mois"])
+        date_cible = st.sidebar.date_input("Date cible (simulation) :", value=datetime.today())
+        
+        col_b1, col_b2 = st.sidebar.columns(2)
+        if col_b1.button("🚀 Analyser", type="primary", use_container_width=True):
+            st.session_state.analyse_lancee = True
+            st.session_state.calcul_medecin_lance = False
+        btn_simuler = col_b2.button("🔮 Simuler", use_container_width=True)
 
-    st.title("📊 Analyse de Facturation")
-    uploaded_file = st.sidebar.file_uploader("Charger le fichier Excel (.xlsx)", type="xlsx", key="f1")
+        st.sidebar.markdown("---")
+        if st.sidebar.button("🩺 Calcul Médecins", use_container_width=True):
+            st.session_state.calcul_medecin_lance = True
+            st.session_state.analyse_lancee = False
 
-    if uploaded_file:
-        try:
-            df_brut = pd.read_excel(uploaded_file, header=0)
-            
-            # --- FILTRES SIDEBAR ---
-            st.sidebar.header("🔍 Filtres")
-            fournisseurs = sorted(df_brut.iloc[:, 9].dropna().unique().tolist())
-            sel_fournisseurs = st.sidebar.multiselect("Fournisseurs :", fournisseurs, default=fournisseurs)
-            lois = sorted(df_brut.iloc[:, 4].dropna().unique().tolist())
-            sel_lois = st.sidebar.multiselect("Lois :", lois, default=lois)
-            
-            options_p = {"Global": None, "6 mois": 6, "4 mois": 4, "3 mois": 3, "2 mois": 2}
-            periods_sel = st.sidebar.multiselect("Périodes :", list(options_p.keys()), default=["Global", "4 mois"])
-            
-            # --- LOGIQUE INITIALE (RECONSTITUÉE) ---
-            df = df_brut[(df_brut.iloc[:, 9].isin(sel_fournisseurs)) & (df_brut.iloc[:, 4].isin(sel_lois))].copy()
+        # ==========================================
+        # --- BLOC ANALYSE INITIALE (VOTRE CODE) ---
+        # ==========================================
+        if not st.session_state.calcul_medecin_lance:
+            df = df_brut[
+                (df_brut.iloc[:, 9].isin(sel_fournisseurs)) & 
+                (df_brut.iloc[:, 4].isin(sel_lois))
+            ].copy()
+
             df = df.rename(columns={
                 df.columns[2]: "date_facture", 
                 df.columns[4]: "loi",
@@ -91,113 +93,174 @@ elif st.session_state.page == 'facturation':
                 df.columns[13]: "montant", 
                 df.columns[15]: "date_paiement"
             })
+            
             df["date_facture"] = df["date_facture"].apply(convertir_date)
             df["date_paiement"] = df["date_paiement"].apply(convertir_date)
             df = df[df["date_facture"].notna()].copy()
             df["montant"] = pd.to_numeric(df["montant"], errors="coerce").fillna(0)
             df["statut"] = df["statut"].astype(str).str.lower().str.strip()
+            df["assureur"] = df["assureur"].fillna("Patient")
             
-            f_att = df[df["statut"].str.contains("attente", case=False, na=False) & (df["statut"] != "en attente (annulé)")].copy()
+            ajd = pd.Timestamp(datetime.today().date())
+            f_att = df[df["statut"].str.startswith("en attente") & (df["statut"] != "en attente (annulé)")].copy()
+            f_att["delai_actuel"] = (ajd - f_att["date_facture"]).dt.days
+            
             st.metric("💰 TOTAL BRUT EN ATTENTE", f"{f_att['montant'].sum():,.2f} CHF")
-            
-            tab1, tab2, tab3, tab4 = st.tabs(["💰 Liquidités", "🕒 Délais", "⚠️ Retards", "📈 Évolution"])
-            # Note : Insérez ici votre boucle 'for p_name in periods_sel' pour tab1-tab4
-            with tab1: st.info("Analyse des liquidités active.")
-            with tab4: st.info("Graphiques d'évolution actifs.")
+            st.markdown("---")
 
-        except Exception as e:
-            st.error(f"Erreur : {e}")
-
-# ==========================================
-# 3. PAGE : ANALYSE MÉDECINS (NOUVEAU MODULE)
-# ==========================================
-elif st.session_state.page == 'medecins':
-    if st.sidebar.button("⬅️ Retour Accueil"):
-        st.session_state.page = 'accueil'
-        st.rerun()
-
-    st.title("🩺 Analyse Avancée des Médecins")
-    uploaded_file = st.sidebar.file_uploader("Charger le fichier Excel (.xlsx)", type="xlsx", key="f2")
-
-    if uploaded_file:
-        df_brut = pd.read_excel(uploaded_file, header=0)
-        
-        # --- FILTRES SIDEBAR ---
-        st.sidebar.header("🔍 Filtres")
-        fournisseurs = sorted(df_brut.iloc[:, 9].dropna().unique().tolist())
-        sel_fournisseurs = st.sidebar.multiselect("Filtrer par Fournisseur :", fournisseurs, default=fournisseurs)
-        
-        # --- PRÉPARATION DES DONNÉES ---
-        df_m = df_brut[df_brut.iloc[:, 9].isin(sel_fournisseurs)].copy()
-        df_m["medecin"] = df_m.iloc[:, 7].astype(str).str.strip()
-        df_m["ca"] = pd.to_numeric(df_m.iloc[:, 14], errors="coerce").fillna(0)
-        df_m["date_f"] = df_m.iloc[:, 2].apply(convertir_date)
-        
-        # Nettoyage : CA > 0 et exclure les noms vides
-        df_m = df_m[(df_m["ca"] > 0) & (df_m["date_f"].notna()) & (df_m["medecin"] != "nan") & (df_m["medecin"] != "")].copy()
-        
-        if not df_m.empty:
-            # --- OPTIONS D'AFFICHAGE ---
-            c1, c2, c3 = st.columns([1, 1, 2])
-            with c1: 
-                type_graph = st.radio("Type de graphique :", ["📈 Courbe", "📊 Barres"], horizontal=True)
-            with c2: 
-                top_n = st.radio("Top à analyser :", options=[5, 10, 20, 50], index=1, horizontal=True)
-            
-            top_list = df_m.groupby("medecin")["ca"].sum().nlargest(top_n).index.tolist()
-            with c3: 
-                choix = st.multiselect("Sélectionner les médecins :", sorted(df_m["medecin"].unique()), default=top_list)
-            
-            if choix:
-                df_f = df_m[df_m["medecin"].isin(choix)].sort_values("date_f")
-                df_f["Mois_P"] = df_f["date_f"].dt.to_period("M")
-                
-                # --- GRAPHIQUE ---
-                data_graph = df_f.groupby([df_f["date_f"].dt.to_period("M").astype(str), "medecin"])["ca"].sum().unstack().fillna(0)
-                if "Courbe" in type_graph:
-                    st.line_chart(data_graph)
+            if btn_simuler:
+                jours_delta = (pd.Timestamp(date_cible) - ajd).days
+                if jours_delta < 0:
+                    st.error("La date doit être dans le futur.")
                 else:
-                    st.bar_chart(data_graph)
+                    st.subheader(f"🔮 Simulation au {date_cible.strftime('%d.%m.%Y')} (+{jours_delta}j)")
+                    res_sim = []
+                    for p_nom in periods_sel:
+                        val = options_p[p_nom]
+                        limit = ajd - pd.DateOffset(months=val) if val else df["date_facture"].min()
+                        p_hist_sim = df[(df["date_paiement"].notna()) & (df["date_facture"] >= limit)].copy()
+                        p_hist_sim["delai"] = (p_hist_sim["date_paiement"] - p_hist_sim["date_facture"]).dt.days
+                        liq, t = calculer_liquidites_fournisseur(f_att, p_hist_sim, [jours_delta])
+                        res_sim.append({"Période": p_nom, "Estimation (CHF)": f"{round(liq[jours_delta]):,}", "Probabilité": f"{t[jours_delta]:.1%}"})
+                    st.table(pd.DataFrame(res_sim))
 
-                # --- LÉGENDE MULTI-LIGNES ---
-                st.markdown("**Légende des prescripteurs sélectionnés :**")
-                cols_leg = st.columns(4)
-                for i, m in enumerate(choix):
-                    cols_leg[i % 4].caption(f"● {m}")
+            if st.session_state.analyse_lancee:
+                tab1, tab2, tab3, tab4 = st.tabs(["💰 Liquidités", "🕒 Délais", "⚠️ Retards", "📈 Évolution"])
 
-                # --- CALCULS PERFORMANCE & TENDANCE ---
-                max_m = df_f["Mois_P"].max()
-                # 3 derniers mois vs 3 mois précédents
-                derniers_3m = [max_m - i for i in range(3)]
-                precedents_3m = [max_m - i for i in range(3, 6)]
-
-                def get_stats(group):
-                    ca_total = group["ca"].sum()
-                    ca_3m = group[group["Mois_P"].isin(derniers_3m)]["ca"].sum()
-                    ca_prev = group[group["Mois_P"].isin(precedents_3m)]["ca"].sum()
+                for p_name in periods_sel:
+                    val = options_p[p_name]
+                    limit_p = ajd - pd.DateOffset(months=val) if val else df["date_facture"].min()
+                    df_p = df[df["date_facture"] >= limit_p]
+                    p_hist = df_p[df_p["date_paiement"].notna()].copy()
+                    p_hist["delai"] = (p_hist["date_paiement"] - p_hist["date_facture"]).dt.days
                     
-                    if ca_3m > ca_prev: trend = "↗️ Hausse"
-                    elif ca_3m < ca_prev: trend = "↘️ Baisse"
-                    else: trend = "➡️ Stable"
-                    
-                    return pd.Series({
-                        "CA Global (Total)": ca_total,
-                        "CA 3 derniers mois": ca_3m,
-                        "Tendance (vs 3m préc.)": trend
-                    })
+                    with tab1:
+                        st.subheader(f"Période : {p_name}")
+                        horizons = [10, 20, 30]
+                        liq, t = calculer_liquidites_fournisseur(f_att, p_hist, horizons)
+                        st.table(pd.DataFrame({
+                            "Horizon": [f"Sous {h}j" for h in horizons],
+                            "Estimation (CHF)": [f"{round(liq[h]):,}" for h in horizons],
+                            "Probabilité": [f"{round(t[h]*100)}%" for h in horizons]
+                        }))
 
-                st.subheader("📋 Tableau de bord des prescripteurs")
-                stats_df = df_f.groupby("medecin").apply(get_stats).sort_values("CA Global (Total)", ascending=False)
+                    with tab2:
+                        st.subheader(f"Délais par assureur ({p_name})")
+                        if not p_hist.empty:
+                            stats = p_hist.groupby("assureur")["delai"].agg(['mean', 'median', 'std']).reset_index()
+                            stats.columns = ["Assureur", "Moyenne (j)", "Médiane (j)", "Écart-type (j)"]
+                            cols = ["Assureur", "Moyenne (j)"]
+                            if show_med: cols.append("Médiane (j)")
+                            if show_std: cols.append("Écart-type (j)")
+                            st.dataframe(stats[cols].sort_values("Moyenne (j)", ascending=False), use_container_width=True)
+
+                    with tab3:
+                        st.subheader(f"Analyse des retards > 30j ({p_name})")
+                        df_att_30 = f_att[f_att["delai_actuel"] > 30].copy()
+                        df_pay_30 = p_hist[p_hist["delai"] > 30].copy()
+                        plus_30 = pd.concat([df_pay_30, df_att_30])
+                        
+                        total_vol = df_p.groupby("assureur").size().reset_index(name="Volume Total")
+                        ret_assur = plus_30.groupby("assureur").size().reset_index(name="Nb Retards")
+                        merged = pd.merge(ret_assur, total_vol, on="assureur", how="right").fillna(0)
+                        merged["Nb Retards"] = merged["Nb Retards"].astype(int)
+                        merged["% Retard"] = (merged["Nb Retards"] / merged["Volume Total"] * 100).round(1)
+                        
+                        st.metric(f"Total Retards ({p_name})", f"{int(merged['Nb Retards'].sum())} factures")
+                        st.dataframe(merged[["assureur", "Nb Retards", "Volume Total", "% Retard"]].sort_values("% Retard", ascending=False), use_container_width=True)
+
+                with tab4:
+                    st.subheader("📈 Évolution du délai de remboursement")
+                    ordre_chrono = ["Global", "6 mois", "4 mois", "3 mois", "2 mois"]
+                    periodes_graph = {"Global": None, "6 mois": 6, "4 mois": 4, "3 mois": 3, "2 mois": 2}
+                    evol_data = []
+                    
+                    p_hist_global = df[df["date_paiement"].notna()].copy()
+                    top_assurances = p_hist_global.groupby("assureur").size().sort_values(ascending=False).head(5).index.tolist()
+
+                    for n, v in periodes_graph.items():
+                        lim = ajd - pd.DateOffset(months=v) if v else df["date_facture"].min()
+                        h_tmp = df[(df["date_paiement"].notna()) & (df["date_facture"] >= lim)].copy()
+                        h_tmp["delai"] = (h_tmp["date_paiement"] - h_tmp["date_facture"]).dt.days
+                        if not h_tmp.empty:
+                            m = h_tmp.groupby("assureur")["delai"].mean().reset_index()
+                            m["Période"] = n
+                            evol_data.append(m)
+
+                    if evol_data:
+                        df_ev = pd.concat(evol_data)
+                        df_pv = df_ev.pivot(index="assureur", columns="Période", values="delai")
+                        cols_presentes = [c for c in ordre_chrono if c in df_pv.columns]
+                        df_pv = df_pv[cols_presentes]
+                        
+                        assur_sel = st.multiselect("Sélectionner les assureurs (Top 5 volume pré-sélectionnés) :", 
+                                                   options=df_pv.index.tolist(), 
+                                                   default=[a for a in top_assurances if a in df_pv.index])
+                        
+                        if assur_sel:
+                            df_plot = df_pv.loc[assur_sel].T
+                            df_plot.index = pd.CategoricalIndex(df_plot.index, categories=ordre_chrono, ordered=True)
+                            df_plot = df_plot.sort_index()
+                            
+                            st.line_chart(df_plot)
+                            st.write("**Détails par période (en jours) :**")
+                            st.caption("🔴 Rouge : Délai max (lent) | 🟢 Vert : Délai min (rapide) pour l'assureur.")
+                            st.dataframe(df_pv.loc[assur_sel].style.highlight_max(axis=1, color='#ff9999').highlight_min(axis=1, color='#99ff99'))
+
+        # ==========================================
+        # --- BLOC MÉDECINS (TOTALEMENT ISOLÉ) ---
+        # ==========================================
+        if st.session_state.calcul_medecin_lance:
+            st.header("👨‍⚕️ Analyse Avancée des Médecins")
+            
+            # Application des filtres de fournisseurs uniquement ici pour garder la séparation
+            df_m = df_brut[df_brut.iloc[:, 9].isin(sel_fournisseurs)].copy()
+            df_m["medecin"] = df_m.iloc[:, 7].astype(str).str.strip()
+            df_m["ca"] = pd.to_numeric(df_m.iloc[:, 14], errors="coerce").fillna(0)
+            df_m["date_f"] = df_m.iloc[:, 2].apply(convertir_date)
+            
+            df_m = df_m[(df_m["ca"] > 0) & (df_m["date_f"].notna()) & (df_m["medecin"] != "nan")].copy()
+            
+            if not df_m.empty:
+                c1, c2, c3 = st.columns([1, 1, 2])
+                with c1: type_graph = st.radio("Graphique :", ["📈 Courbe", "📊 Barres"], horizontal=True)
+                with c2: top_n = st.radio("Top :", options=[5, 10, 20, 50], index=1, horizontal=True)
                 
-                st.dataframe(
-                    stats_df.style.format({
-                        "CA Global (Total)": "{:,.2f} CHF",
-                        "CA 3 derniers mois": "{:,.2f} CHF"
-                    }),
-                    use_container_width=True
-                )
-                st.info("💡 La tendance compare la somme du CA des 3 derniers mois disponibles à la somme des 3 mois les précédant.")
-        else:
-            st.warning("Aucune donnée disponible pour les filtres sélectionnés.")
-    else:
-        st.info("👋 Veuillez charger votre fichier Excel pour commencer.")
+                top_list = df_m.groupby("medecin")["ca"].sum().nlargest(top_n).index.tolist()
+                with c3: choix = st.multiselect("Sélectionner :", sorted(df_m["medecin"].unique()), default=top_list)
+                
+                if choix:
+                    df_f = df_m[df_m["medecin"].isin(choix)].sort_values("date_f")
+                    df_f["Mois_P"] = df_f["date_f"].dt.to_period("M")
+                    
+                    data_graph = df_f.groupby([df_f["date_f"].dt.to_period("M").astype(str), "medecin"])["ca"].sum().unstack().fillna(0)
+                    if "📈 Courbe" in type_graph: st.line_chart(data_graph)
+                    else: st.bar_chart(data_graph)
+
+                    # Légendes en colonnes pour éviter les coupures
+                    st.markdown("**Légende complète :**")
+                    cols_leg = st.columns(4)
+                    for i, m in enumerate(choix): cols_leg[i % 4].caption(f"● {m}")
+
+                    # --- CALCULS TENDANCE ---
+                    max_m = df_f["Mois_P"].max()
+                    derniers_3m = [max_m - i for i in range(3)]
+                    precedents_3m = [max_m - i for i in range(3, 6)]
+
+                    def get_stats(group):
+                        ca_total = group["ca"].sum()
+                        ca_3m = group[group["Mois_P"].isin(derniers_3m)]["ca"].sum()
+                        ca_prev = group[group["Mois_P"].isin(precedents_3m)]["ca"].sum()
+                        trend = "↗️ Hausse" if ca_3m > ca_prev else "↘️ Baisse" if ca_3m < ca_prev else "➡️ Stable"
+                        return pd.Series({"CA Global": ca_total, "CA 3 mois": ca_3m, "Tendance": trend})
+
+                    st.subheader("📋 Performance")
+                    stats_df = df_f.groupby("medecin").apply(get_stats).sort_values("CA Global", ascending=False)
+                    st.dataframe(stats_df.style.format({"CA Global": "{:,.2f}", "CA 3 mois": "{:,.2f}"}), use_container_width=True)
+            else:
+                st.warning("Aucune donnée disponible pour ces filtres.")
+
+    except Exception as e:
+        st.error(f"Erreur : {e}")
+else:
+    st.info("👋 Veuillez charger votre fichier Excel (.xlsx).")
