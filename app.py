@@ -61,7 +61,7 @@ if st.session_state.page == "accueil":
             st.rerun()
 
 # ==========================================
-# 📊 MODULE FACTURES (CORRIGÉ)
+# 📊 MODULE FACTURES
 # ==========================================
 elif st.session_state.page == "factures":
     if st.sidebar.button("⬅️ Retour Accueil"):
@@ -91,9 +91,8 @@ elif st.session_state.page == "factures":
                 st.session_state.analyse_lancee = True
             btn_simuler = col_b2.button("🔮 Simuler", use_container_width=True)
 
+            # Sélection des colonnes par index pour éviter les erreurs d'objets Index
             df = df_brut[(df_brut.iloc[:, 9].isin(sel_fournisseurs)) & (df_brut.iloc[:, 4].isin(sel_lois))].copy()
-            
-            # --- CORRECTION ICI : Accès aux noms de colonnes par index ---
             df = df.rename(columns={
                 df.columns[2]: "date_facture", 
                 df.columns[4]: "loi", 
@@ -162,15 +161,49 @@ elif st.session_state.page == "factures":
                         merged["% Retard"] = (merged["Nb Retards"] / merged["Volume Total"] * 100).round(1)
                         st.metric(f"Total Retards ({p_name})", f"{int(merged['Nb Retards'].sum())} factures")
                         st.dataframe(merged[["assureur", "Nb Retards", "Volume Total", "% Retard"]].sort_values("% Retard", ascending=False), use_container_width=True)
+                
                 with tab4:
                     st.subheader("📈 Évolution du délai de remboursement")
-                    # (Ton code d'évolution original ici...)
-                    st.info("Sélectionnez les assureurs pour visualiser l'évolution.")
+                    ordre_chrono = ["Global", "6 mois", "4 mois", "3 mois", "2 mois"]
+                    periodes_graph = {"Global": None, "6 mois": 6, "4 mois": 4, "3 mois": 3, "2 mois": 2}
+                    evol_data = []
+                    p_hist_global = df[df["date_paiement"].notna()].copy()
+                    top_assurances = p_hist_global.groupby("assureur").size().sort_values(ascending=False).head(5).index.tolist()
+                    
+                    for n, v in periodes_graph.items():
+                        lim = ajd - pd.DateOffset(months=v) if v else df["date_facture"].min()
+                        h_tmp = df[(df["date_paiement"].notna()) & (df["date_facture"] >= lim)].copy()
+                        h_tmp["delai"] = (h_tmp["date_paiement"] - h_tmp["date_facture"]).dt.days
+                        if not h_tmp.empty:
+                            m = h_tmp.groupby("assureur")["delai"].mean().reset_index()
+                            m["Période"] = n
+                            evol_data.append(m)
+                    
+                    if evol_data:
+                        df_ev = pd.concat(evol_data)
+                        df_pv = df_ev.pivot(index="assureur", columns="Période", values="delai")
+                        cols_presentes = [c for c in ordre_chrono if c in df_pv.columns]
+                        df_pv = df_pv[cols_presentes]
+                        
+                        assur_sel = st.multiselect("Sélectionner les assureurs (Top 5 volume par défaut) :", 
+                                                   options=df_pv.index.tolist(), 
+                                                   default=[a for a in top_assurances if a in df_pv.index])
+                        
+                        if assur_sel:
+                            df_plot = df_pv.loc[assur_sel].T
+                            df_plot.index = pd.CategoricalIndex(df_plot.index, categories=ordre_chrono, ordered=True)
+                            st.line_chart(df_plot.sort_index())
+                            st.write("**Détails par période (en jours) :**")
+                            st.caption("🔴 Rouge : Délai max (lent) | 🟢 Vert : Délai min (rapide) pour l'assureur.")
+                            st.dataframe(df_pv.loc[assur_sel].style.highlight_max(axis=1, color='#ff9999').highlight_min(axis=1, color='#99ff99'))
+                        else:
+                            st.info("Veuillez sélectionner au moins un assureur.")
+
         except Exception as e:
             st.error(f"Erreur d'analyse : {e}")
 
 # ==========================================
-# 👨‍⚕️ MODULE MÉDECINS (OPTIMISÉ XXL)
+# 👨‍⚕️ MODULE MÉDECINS (OPTI XXL)
 # ==========================================
 elif st.session_state.page == "medecins":
     st.markdown("<style>.block-container { padding-left: 1rem; padding-right: 1rem; max-width: 100%; }</style>", unsafe_allow_html=True)
@@ -220,7 +253,7 @@ elif st.session_state.page == "medecins":
 
                 tab_s = tab_final.sort_values("CA Global", ascending=False)
                 def_sel = tab_s["medecin"].tolist() if m_top == "Tout" else tab_s.head(int(m_top))["medecin"].tolist()
-                choix = st.multiselect("Affiner la sélection :", options=sorted(tab_final["medecin"].unique()), default=def_sel)
+                choix = st.multiselect("Affiner la sélection des médecins :", options=sorted(tab_final["medecin"].unique()), default=def_sel)
 
                 if choix:
                     df_p = df_m[df_m["medecin"].isin(choix)].copy()
