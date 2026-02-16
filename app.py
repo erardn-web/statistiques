@@ -43,15 +43,16 @@ uploaded_file = st.sidebar.file_uploader("Charger le fichier Excel (.xlsx)", typ
 
 if uploaded_file:
     try:
-        # Lecture du fichier (Onglet Facture par défaut)
         df_brut = pd.read_excel(uploaded_file, header=0)
         
         # --- FILTRES (SIDEBAR) ---
         st.sidebar.header("🔍 2. Filtres")
         
+        # Filtre Fournisseurs (Colonne J / Index 9)
         fournisseurs = df_brut.iloc[:, 9].dropna().unique().tolist()
         sel_fournisseurs = st.sidebar.multiselect("Fournisseurs :", options=sorted(fournisseurs), default=fournisseurs)
         
+        # Filtre Lois (Colonne E / Index 4)
         lois = df_brut.iloc[:, 4].dropna().unique().tolist()
         sel_lois = st.sidebar.multiselect("Types de Loi :", options=sorted(lois), default=lois)
         
@@ -116,7 +117,7 @@ if uploaded_file:
                 st.table(pd.DataFrame(res_sim))
 
         if st.session_state.analyse_lancee:
-            # --- AJOUT DE L'ONGLET MÉDECINS ---
+            # Ajout de l'onglet Médecins à la suite des 4 onglets originaux
             tab1, tab2, tab3, tab4, tab5 = st.tabs(["💰 Liquidités", "🕒 Délais", "⚠️ Retards", "📈 Évolution", "👨‍⚕️ Top Médecins"])
 
             for p_name in periods_sel:
@@ -161,45 +162,45 @@ if uploaded_file:
 
                 with tab4:
                     st.subheader(f"Évolution temporelle ({p_name})")
+                    # On garde la logique originale ici
                     if not p_hist.empty:
+                        # Exemple de graphique d'évolution (CA par mois)
                         p_hist["mois"] = p_hist["date_facture"].dt.to_period("M").astype(str)
-                        evol = p_hist.groupby("mois")["delai"].mean()
-                        st.line_chart(evol)
+                        evol_ca = p_hist.groupby("mois")["montant"].sum()
+                        st.line_chart(evol_ca)
 
-            # --- LOGIQUE DE L'ONGLET MÉDECINS (Hors boucle de période pour vue globale) ---
             with tab5:
-                st.subheader("Analyse des Médecins Prescripteurs (Top 10 par CA)")
+                st.subheader("Top 10 Médecins Prescripteurs (CA généré)")
                 
-                # Extraction Colonne H (Médecin - Index 7) et Colonne O (CA - Index 14)
+                # Préparation des données (H = Médecin, O = CA Encaissé)
                 df_med = df_brut.copy()
-                df_med["medecin"] = df_med.iloc[:, 7].fillna("Non spécifié")
-                df_med["ca_encaisse"] = pd.to_numeric(df_med.iloc[:, 14], errors="coerce").fillna(0)
+                df_med["medecin"] = df_med.iloc[:, 7].fillna("Inconnu")
+                # Colonne O (index 14) pour le CA
+                df_med["ca"] = pd.to_numeric(df_med.iloc[:, 14], errors="coerce").fillna(0)
                 df_med["date_f"] = df_med.iloc[:, 2].apply(convertir_date)
                 
-                # Filtrage : Montant en O non nul
-                df_med_filtré = df_med[df_med["ca_encaisse"] > 0].dropna(subset=["date_f"]).copy()
+                # Filtre : Uniquement CA > 0
+                df_med = df_med[df_med["ca"] > 0].dropna(subset=["date_f"])
                 
-                if not df_med_filtré.empty:
-                    df_med_filtré["Mois"] = df_med_filtré["date_f"].dt.to_period("M").astype(str)
+                if not df_med.empty:
+                    df_med["Mois"] = df_med["date_f"].dt.to_period("M").astype(str)
                     
-                    # Identifier les 10 meilleurs médecins (CA total)
-                    top_10_noms = df_med_filtré.groupby("medecin")["ca_encaisse"].sum().nlargest(10).index
-                    df_top_10 = df_med_filtré[df_med_filtré["medecin"].isin(top_10_noms)]
+                    # Top 10 global
+                    top_10 = df_med.groupby("medecin")["ca"].sum().nlargest(10).index
+                    df_top = df_med[df_med["medecin"].isin(top_10)]
                     
-                    # Pivot pour graphique : Somme du CA par mois et par médecin
-                    pivot_med = df_top_10.groupby(["Mois", "medecin"])["ca_encaisse"].sum().unstack().fillna(0)
+                    # Pivot pour graphique en courbe
+                    pivot_med = df_top.groupby(["Mois", "medecin"])["ca"].sum().unstack().fillna(0)
                     
-                    st.write("### Chiffre d'affaires mensuel par prescripteur (Top 10)")
-                    st.bar_chart(pivot_med)
+                    st.write("### Évolution mensuelle du CA par médecin")
+                    st.line_chart(pivot_med)
                     
-                    st.write("### Classement cumulé (CHF)")
-                    classement = df_med_filtré.groupby("medecin")["ca_encaisse"].sum().sort_values(ascending=False).head(10)
-                    st.table(classement.apply(lambda x: f"{x:,.2f} CHF"))
+                    st.write("### Classement des 10 plus gros prescripteurs")
+                    st.table(df_med.groupby("medecin")["ca"].sum().sort_values(ascending=False).head(10).apply(lambda x: f"{x:,.2f} CHF"))
                 else:
-                    st.warning("Aucune donnée de paiement trouvée dans la colonne O pour générer l'analyse.")
+                    st.warning("Aucune donnée avec paiement (colonne O > 0) n'a été trouvée.")
 
     except Exception as e:
-        st.error(f"Une erreur est survenue : {e}")
+        st.error(f"Erreur lors de l'analyse : {e}")
 else:
-    st.info("Veuillez charger un fichier Excel pour commencer l'analyse.")
-
+    st.info("Charger un fichier Excel pour commencer.")
