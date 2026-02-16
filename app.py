@@ -199,7 +199,7 @@ elif st.session_state.page == "factures":
         st.info("Veuillez charger un fichier Excel pour l'analyse des factures.")
 
 # ==========================================
-# 👨‍⚕️ MODULE MÉDECINS
+# 👨‍⚕️ MODULE MÉDECINS (TOP DANS LA PAGE)
 # ==========================================
 elif st.session_state.page == "medecins":
     if st.sidebar.button("⬅️ Retour Accueil"):
@@ -213,7 +213,7 @@ elif st.session_state.page == "medecins":
         try:
             df_brut = pd.read_excel(uploaded_file, header=0)
             
-            # --- FILTRE FOURNISSEURS ---
+            # --- FILTRE FOURNISSEURS (SIDEBAR) ---
             fourn_med = sorted(df_brut.iloc[:, 9].dropna().unique().tolist())
             sel_fourn_med = st.sidebar.multiselect("Filtrer par Fournisseur :", fourn_med, default=fourn_med)
             
@@ -244,24 +244,28 @@ elif st.session_state.page == "medecins":
                     else: return "➡️ Stable"
                 tab_final["Tendance"] = tab_final.apply(calculer_tendance, axis=1)
 
-                # --- NOUVEAU : SÉLECTEUR DE TOP ---
-                st.sidebar.markdown("---")
-                st.sidebar.subheader("🏆 Sélection Rapide")
-                mode_top = st.sidebar.selectbox("Afficher le Top :", [5, 10, 25, 50, "Tout"])
+                # --- SÉLECTION DU TOP (DANS LA PAGE) ---
+                st.markdown("### 🏆 Sélection et Visualisation")
+                col_top, col_type = st.columns([1, 2])
                 
-                # Définition de la présélection
+                with col_top:
+                    mode_top = st.selectbox("Afficher le Top :", [5, 10, 25, 50, "Tout"], index=1)
+                
+                with col_type:
+                    type_graph = st.radio("Type de visualisation :", ["📊 Barres", "📈 Courbes"], horizontal=True)
+
+                # Définition de la présélection dynamique
                 tab_sorted = tab_final.sort_values("CA Global", ascending=False)
                 if mode_top == "Tout":
                     default_selection = tab_sorted["medecin"].tolist()
                 else:
                     default_selection = tab_sorted.head(int(mode_top))["medecin"].tolist()
 
-                # --- INTERFACE ---
-                choix_meds = st.multiselect("🎯 Sélectionner les médecins :", options=sorted(tab_final["medecin"].unique()), default=default_selection)
-                
-                type_graph = st.radio("Type de visualisation :", ["📊 Histogramme (Barres)", "📈 Courbe d'évolution"], horizontal=True)
+                # Champ de sélection multi-critères
+                choix_meds = st.multiselect("🎯 Affiner la sélection des médecins :", options=sorted(tab_final["medecin"].unique()), default=default_selection)
 
                 if choix_meds:
+                    # Préparation données graphiques
                     df_plot = df_m[df_m["medecin"].isin(choix_meds)].copy()
                     df_plot["Mois"] = df_plot["date_f"].dt.to_period("M").astype(str)
                     df_plot = df_plot.groupby(["Mois", "medecin"])["ca"].sum().reset_index()
@@ -270,16 +274,32 @@ elif st.session_state.page == "medecins":
                     base = alt.Chart(df_plot).encode(
                         x=alt.X('Mois:O', title='Période'),
                         y=alt.Y('ca:Q', title='CA (CHF)'),
-                        color=alt.Color('medecin:N', legend=alt.Legend(orient='bottom', columns=4, labelLimit=0))
+                        color=alt.Color('medecin:N', legend=alt.Legend(
+                            orient='bottom', 
+                            columns=4, 
+                            labelLimit=0,
+                            title="Médecins"
+                        ))
                     ).properties(height=450)
 
-                    chart = base.mark_line(point=True) if "Courbe" in type_graph else base.mark_bar()
+                    chart = base.mark_line(point=True) if "Courbes" in type_graph else base.mark_bar()
                     st.altair_chart(chart, use_container_width=True)
 
-                    st.subheader("Résumé des performances")
+                    # --- TABLEAU RÉSUMÉ ---
+                    st.subheader("📊 Résumé des performances")
                     tab_display = tab_final[tab_final["medecin"].isin(choix_meds)].sort_values("CA Global", ascending=False)
-                    st.dataframe(tab_display[["medecin", "CA Global", "CA 3 derniers mois", "Tendance"]], use_container_width=True, hide_index=True)
+                    
+                    st.dataframe(
+                        tab_display[["medecin", "CA Global", "CA 3 derniers mois", "Tendance"]]
+                        .rename(columns={"medecin": "Médecin"}), 
+                        use_container_width=True, 
+                        hide_index=True
+                    )
+                else:
+                    st.info("Sélectionnez au moins un médecin pour afficher les données.")
             else:
-                st.warning("Aucune donnée trouvée.")
+                st.warning("Aucune donnée encaissée trouvée avec les filtres actuels.")
         except Exception as e:
-            st.error(f"Erreur : {e}")
+            st.error(f"Erreur technique : {e}")
+    else:
+        st.info("👋 Veuillez charger votre fichier Excel dans la barre latérale pour analyser les médecins.")
