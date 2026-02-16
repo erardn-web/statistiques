@@ -71,7 +71,6 @@ if uploaded_file:
         btn_simuler = col_b2.button("🔮 Simuler", use_container_width=True)
 
         # --- NETTOYAGE ET APPLICATION FILTRES ---
-        # Application des filtres Fournisseurs ET Lois
         df = df_brut[
             (df_brut.iloc[:, 9].isin(sel_fournisseurs)) & 
             (df_brut.iloc[:, 4].isin(sel_lois))
@@ -118,7 +117,7 @@ if uploaded_file:
                 st.table(pd.DataFrame(res_sim))
 
         if st.session_state.analyse_lancee:
-            # --- ONGLETS : AJOUT DU 5ème SANS TOUCHER AUX AUTRES ---
+            # --- ONGLETS : AJOUT DU 5EME SANS TOUCHER AUX AUTRES ---
             tab1, tab2, tab3, tab4, tab5 = st.tabs(["💰 Liquidités", "🕒 Délais", "⚠️ Retards", "📈 Évolution", "👨‍⚕️ Top Médecins"])
 
             for p_name in periods_sel:
@@ -170,32 +169,34 @@ if uploaded_file:
                         evol = p_hist.groupby("mois")["delai"].mean()
                         st.line_chart(evol)
 
-            # --- NOUVEL ONGLET MÉDECINS ---
+            # --- NOUVEL ONGLET TOP MÉDECINS ---
             with tab5:
                 st.subheader("Top 10 Médecins Prescripteurs (CA généré)")
-                df_m = df_brut.copy()
-                df_m["medecin"] = df_m.iloc[:, 7].fillna("Inconnu")
-                df_m["ca"] = pd.to_numeric(df_m.iloc[:, 14], errors="coerce").fillna(0)
-                df_m["date_ref"] = df_m.iloc[:, 2].apply(convertir_date)
+                df_med = df_brut.copy()
+                # Colonne H (Index 7) = Médecin | Colonne O (Index 14) = CA
+                df_med["nom_medecin"] = df_med.iloc[:, 7].fillna("Inconnu")
+                df_med["ca_encaisse"] = pd.to_numeric(df_med.iloc[:, 14], errors='coerce').fillna(0)
+                df_med["date_ref"] = df_med.iloc[:, 2].apply(convertir_date)
                 
-                # Uniquement CA > 0 et date valide
-                df_m = df_m[(df_m["ca"] > 0) & (df_m["date_ref"].notna())]
+                # Filtrer les CA non nuls et les dates valides
+                df_med = df_med[(df_med["ca_encaisse"] > 0) & (df_med["date_ref"].notna())]
                 
-                if not df_m.empty:
-                    df_m["Mois"] = df_m["date_ref"].dt.to_period("M").astype(str)
-                    top_10 = df_m.groupby("medecin")["ca"].sum().nlargest(10).index
-                    df_top = df_m[df_m["medecin"].isin(top_10)]
+                if not df_med.empty:
+                    df_med["Mois"] = df_med["date_ref"].dt.to_period("M").astype(str)
+                    # Identifier les 10 meilleurs médecins au total
+                    top_10_list = df_med.groupby("nom_medecin")["ca_encaisse"].sum().nlargest(10).index
+                    df_top = df_med[df_med["nom_medecin"].isin(top_10_list)]
                     
-                    # Graphique en courbes
-                    pivot_m = df_top.groupby(["Mois", "medecin"])["ca"].sum().unstack().fillna(0)
-                    st.line_chart(pivot_m)
+                    # Graphique en courbe mois par mois
+                    pivot_med = df_top.groupby(["Mois", "nom_medecin"])["ca_encaisse"].sum().unstack().fillna(0)
+                    st.line_chart(pivot_med)
                     
-                    st.write("### Total cumulé (CHF)")
-                    st.table(df_m.groupby("medecin")["ca"].sum().sort_values(ascending=False).head(10).apply(lambda x: f"{x:,.2f} CHF"))
+                    st.write("### Classement cumulé (CHF)")
+                    st.table(df_med.groupby("nom_medecin")["ca_encaisse"].sum().sort_values(ascending=False).head(10).apply(lambda x: f"{x:,.2f} CHF"))
                 else:
-                    st.info("Aucun paiement trouvé dans la colonne O.")
+                    st.info("Aucune donnée de paiement (colonne O) n'est supérieure à 0.")
 
     except Exception as e:
-        st.error(f"Erreur : {e}")
+        st.error(f"Une erreur est survenue : {e}")
 else:
-    st.info("Charger un fichier Excel (.xlsx) pour commencer.")
+    st.info("Veuillez charger un fichier Excel (.xlsx) pour commencer l'analyse.")
