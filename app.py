@@ -1,17 +1,18 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime
+import altair as alt
 
 # --- CONFIGURATION PAGE WEB ---
 st.set_page_config(page_title="Analyseur de Facturation Pro", layout="wide", page_icon="🏥")
 
-# --- INITIALISATION DE L'ÉTAT (NAVIGATION & ANALYSE) ---
+# --- INITIALISATION DE L'ÉTAT ---
 if 'page' not in st.session_state:
     st.session_state.page = "accueil"
 if 'analyse_lancee' not in st.session_state:
     st.session_state.analyse_lancee = False
 
-# --- LOGIQUE DE CALCUL (TES FONCTIONS ORIGINALES) ---
+# --- LOGIQUE DE CALCUL (FONCTIONS ORIGINALES) ---
 def convertir_date(val):
     if pd.isna(val) or str(val).strip() == "": return pd.NaT
     if isinstance(val, pd.Timestamp): return val
@@ -54,13 +55,13 @@ if st.session_state.page == "accueil":
             
     with col2:
         st.success("🩺 **MODULE MÉDECINS**")
-        st.write("Analyse du CA encaissé par médecin prescripteur et évolution temporelle.")
+        st.write("Analyse du CA par médecin, tendances Vitalité (90j/365j) et top prescripteurs.")
         if st.button("Accéder à l'Analyse Médecins", use_container_width=True):
             st.session_state.page = "medecins"
             st.rerun()
 
 # ==========================================
-# 📊 MODULE FACTURATION
+# 📊 MODULE FACTURES (STRICTEMENT D'ORIGINE)
 # ==========================================
 elif st.session_state.page == "factures":
     if st.sidebar.button("⬅️ Retour Accueil"):
@@ -73,52 +74,39 @@ elif st.session_state.page == "factures":
     if uploaded_file:
         try:
             df_brut = pd.read_excel(uploaded_file, header=0)
-            
-            st.sidebar.header("🔍 Configuration")
+            st.sidebar.header("🔍 2. Filtres")
             fournisseurs = df_brut.iloc[:, 9].dropna().unique().tolist()
             sel_fournisseurs = st.sidebar.multiselect("Fournisseurs :", options=sorted(fournisseurs), default=fournisseurs)
             lois = df_brut.iloc[:, 4].dropna().unique().tolist()
             sel_lois = st.sidebar.multiselect("Types de Loi :", options=sorted(lois), default=lois)
-            
-            st.sidebar.header("📊 Options Délais")
+            st.sidebar.header("📊 3. Options Délais")
             show_med = st.sidebar.checkbox("Afficher la Médiane", value=True)
             show_std = st.sidebar.checkbox("Afficher l'Écart-type", value=True)
-            
-            st.sidebar.header("📅 Périodes & Simulation")
+            st.sidebar.header("📅 4. Périodes & Simulation")
             options_p = {"Global": None, "6 mois": 6, "4 mois": 4, "3 mois": 3, "2 mois": 2, "1 mois": 1}
             periods_sel = st.sidebar.multiselect("Analyser les périodes :", list(options_p.keys()), default=["Global", "4 mois"])
             date_cible = st.sidebar.date_input("Date cible (simulation) :", value=datetime.today())
-            
             col_b1, col_b2 = st.sidebar.columns(2)
             if col_b1.button("🚀 Analyser", type="primary", use_container_width=True):
                 st.session_state.analyse_lancee = True
             btn_simuler = col_b2.button("🔮 Simuler", use_container_width=True)
 
-            # --- PRÉPARATION DONNÉES (TON CODE) ---
             df = df_brut[(df_brut.iloc[:, 9].isin(sel_fournisseurs)) & (df_brut.iloc[:, 4].isin(sel_lois))].copy()
-            df = df.rename(columns={
-                df.columns[2]: "date_facture", df.columns[4]: "loi",
-                df.columns[8]: "assureur", df.columns[9]: "fournisseur", 
-                df.columns[12]: "statut", df.columns[13]: "montant", 
-                df.columns[15]: "date_paiement"
-            })
+            df = df.rename(columns={df.columns[2]: "date_facture", df.columns[4]: "loi", df.columns[8]: "assureur", df.columns[9]: "fournisseur", df.columns[12]: "statut", df.columns[13]: "montant", df.columns[15]: "date_paiement"})
             df["date_facture"] = df["date_facture"].apply(convertir_date)
             df["date_paiement"] = df["date_paiement"].apply(convertir_date)
             df = df[df["date_facture"].notna()].copy()
             df["montant"] = pd.to_numeric(df["montant"], errors="coerce").fillna(0)
             df["statut"] = df["statut"].astype(str).str.lower().str.strip()
             df["assureur"] = df["assureur"].fillna("Patient")
-            
             ajd = pd.Timestamp(datetime.today().date())
             f_att = df[df["statut"].str.startswith("en attente") & (df["statut"] != "en attente (annulé)")].copy()
             f_att["delai_actuel"] = (ajd - f_att["date_facture"]).dt.days
-            
             st.metric("💰 TOTAL BRUT EN ATTENTE", f"{f_att['montant'].sum():,.2f} CHF")
 
             if btn_simuler:
                 jours_delta = (pd.Timestamp(date_cible) - ajd).days
                 if jours_delta >= 0:
-                    st.subheader(f"🔮 Simulation au {date_cible.strftime('%d.%m.%Y')}")
                     res_sim = []
                     for p_nom in periods_sel:
                         val = options_p[p_nom]
@@ -137,15 +125,11 @@ elif st.session_state.page == "factures":
                     df_p = df[df["date_facture"] >= limit_p]
                     p_hist = df_p[df_p["date_paiement"].notna()].copy()
                     p_hist["delai"] = (p_hist["date_paiement"] - p_hist["date_facture"]).dt.days
-                    
                     with tab1:
-                        st.subheader(f"Période : {p_name}")
                         horizons = [10, 20, 30]
                         liq, t = calculer_liquidites_fournisseur(f_att, p_hist, horizons)
                         st.table(pd.DataFrame({"Horizon": [f"Sous {h}j" for h in horizons], "Estimation (CHF)": [f"{round(liq[h]):,}" for h in horizons], "Probabilité": [f"{round(t[h]*100)}%" for h in horizons]}))
-
                     with tab2:
-                        st.subheader(f"Délais par assureur ({p_name})")
                         if not p_hist.empty:
                             stats = p_hist.groupby("assureur")["delai"].agg(['mean', 'median', 'std']).reset_index()
                             stats.columns = ["Assureur", "Moyenne (j)", "Médiane (j)", "Écart-type (j)"]
@@ -153,9 +137,7 @@ elif st.session_state.page == "factures":
                             if show_med: cols_to_show.append("Médiane (j)")
                             if show_std: cols_to_show.append("Écart-type (j)")
                             st.dataframe(stats[cols_to_show].sort_values("Moyenne (j)", ascending=False), use_container_width=True)
-
                     with tab3:
-                        st.subheader(f"Analyse des retards > 30j ({p_name})")
                         df_att_30 = f_att[f_att["delai_actuel"] > 30].copy()
                         df_pay_30 = p_hist[p_hist["delai"] > 30].copy()
                         plus_30 = pd.concat([df_pay_30, df_att_30])
@@ -166,7 +148,6 @@ elif st.session_state.page == "factures":
                         merged["% Retard"] = (merged["Nb Retards"] / merged["Volume Total"] * 100).round(1)
                         st.metric(f"Total Retards ({p_name})", f"{int(merged['Nb Retards'].sum())} factures")
                         st.dataframe(merged[["assureur", "Nb Retards", "Volume Total", "% Retard"]].sort_values("% Retard", ascending=False), use_container_width=True)
-
                 with tab4:
                     st.subheader("📈 Évolution du délai de remboursement")
                     ordre_chrono = ["Global", "6 mois", "4 mois", "3 mois", "2 mois"]
@@ -192,14 +173,11 @@ elif st.session_state.page == "factures":
                             df_plot = df_pv.loc[assur_sel].T
                             df_plot.index = pd.CategoricalIndex(df_plot.index, categories=ordre_chrono, ordered=True)
                             st.line_chart(df_plot.sort_index())
-                            st.dataframe(df_pv.loc[assur_sel].style.highlight_max(axis=1, color='#ff9999').highlight_min(axis=1, color='#99ff99'))
         except Exception as e:
             st.error(f"Erreur d'analyse : {e}")
-    else:
-        st.info("Veuillez charger un fichier Excel pour l'analyse des factures.")
 
 # ==========================================
-# 👨‍⚕️ MODULE MÉDECINS (LOGIQUE TENDANCE 90j/365j)
+# 👨‍⚕️ MODULE MÉDECINS (OPTIMISÉ XXL + TENDANCE RATIO)
 # ==========================================
 elif st.session_state.page == "medecins":
     st.markdown("<style>.block-container { padding-left: 1rem; padding-right: 1rem; max-width: 100%; }</style>", unsafe_allow_html=True)
@@ -208,7 +186,7 @@ elif st.session_state.page == "medecins":
         st.rerun()
 
     st.header("👨‍⚕️ Performance Médecins")
-    uploaded_file = st.sidebar.file_uploader("Fichier Excel", type="xlsx", key="med_up")
+    uploaded_file = st.sidebar.file_uploader("Charger le fichier Excel (.xlsx)", type="xlsx", key="med_up")
     
     if uploaded_file:
         try:
@@ -227,40 +205,31 @@ elif st.session_state.page == "medecins":
                 t_90j = ajd - pd.DateOffset(days=90)
                 t_365j = ajd - pd.DateOffset(days=365)
 
-                # 1. CA Global (toute la période du fichier)
+                # Calculs CA 
                 stats_ca = df_m.groupby("medecin")["ca"].sum().reset_index(name="CA Global")
-                
-                # 2. CA 90 derniers jours
                 ca_90 = df_m[df_m["date_f"] >= t_90j].groupby("medecin")["ca"].sum().reset_index(name="CA 90j")
-                
-                # 3. CA 365 derniers jours
                 ca_365 = df_m[df_m["date_f"] >= t_365j].groupby("medecin")["ca"].sum().reset_index(name="CA 365j")
                 
-                # Fusion des données
                 tab_final = stats_ca.merge(ca_90, on="medecin", how="left").merge(ca_365, on="medecin", how="left").fillna(0)
 
-                # --- NOUVELLE LOGIQUE DE TENDANCE ---
+                # Logique Tendance demandée (Ratio 90j / 365j)
                 def calc_tendance_ratio(row):
                     if row["CA 365j"] <= 0: return "⚪ Inconnu"
                     ratio = (row["CA 90j"] / row["CA 365j"]) * 100
-                    
-                    if ratio <= 23:
-                        return f"↘️ Baisse ({ratio:.1f}%)"
-                    elif 23 < ratio < 27:
-                        return f"➡️ Stable ({ratio:.1f}%)"
-                    else: # ratio >= 27
-                        return f"↗️ Hausse ({ratio:.1f}%)"
+                    if ratio <= 23: return "↘️ Baisse"
+                    elif 23 < ratio < 27: return "➡️ Stable"
+                    else: return "↗️ Hausse"
 
-                tab_final["Tendance (Vitalité)"] = tab_final.apply(calc_tendance_ratio, axis=1)
+                tab_final["Tendance"] = tab_final.apply(calc_tendance_ratio, axis=1)
 
                 st.markdown("### 🏆 Sélection et Visualisation")
-                c1, c2 = st.columns()
+                c1, c2 = st.columns(2) 
                 with c1: m_top = st.selectbox("Afficher le Top :", [5, 10, 25, 50, "Tout"], index=1)
                 with c2: t_graph = st.radio("Style :", ["📊 Barres", "📈 Courbes"], horizontal=True)
 
                 tab_s = tab_final.sort_values("CA Global", ascending=False)
                 def_sel = tab_s["medecin"].tolist() if m_top == "Tout" else tab_s.head(int(m_top))["medecin"].tolist()
-                choix = st.multiselect("Affiner la sélection :", options=sorted(tab_final["medecin"].unique()), default=def_sel)
+                choix = st.multiselect("Affiner la sélection des médecins :", options=sorted(tab_final["medecin"].unique()), default=def_sel)
 
                 if choix:
                     df_p = df_m[df_m["medecin"].isin(choix)].copy()
@@ -275,18 +244,13 @@ elif st.session_state.page == "medecins":
                     
                     st.altair_chart(chart_base.mark_line(point=True) if "Courbes" in t_graph else chart_base.mark_bar(), use_container_width=True)
                     
-                    # Affichage du tableau final
-                    st.subheader("📊 Détails et Vitalité (90j vs 365j)")
-                    cols_finales = ["medecin", "CA Global", "CA 365j", "CA 90j", "Tendance (Vitalité)"]
+                    st.subheader("📊 Détails des performances (Ratio 90j / 365j)")
                     st.dataframe(
                         tab_final[tab_final["medecin"].isin(choix)]
-                        .sort_values("CA Global", ascending=False)[cols_finales]
-                        .style.format({"CA Global": "{:,.2f}", "CA 365j": "{:,.2f}", "CA 90j": "{:,.2f}"}),
-                        use_container_width=True, 
-                        hide_index=True
+                        .sort_values("CA Global", ascending=False)[["medecin", "CA Global", "CA 365j", "CA 90j", "Tendance"]]
+                        .style.format({"CA Global": "{:,.2f} CHF", "CA 365j": "{:,.2f} CHF", "CA 90j": "{:,.2f} CHF"}),
+                        use_container_width=True, hide_index=True
                     )
             else:
-                st.warning("Aucune donnée trouvée pour ces fournisseurs.")
-        except Exception as e: st.error(f"Erreur : {e}")
-
-
+                st.warning("Aucune donnée encaissée trouvée.")
+        except Exception as e: st.error(f"Erreur technique : {e}")
