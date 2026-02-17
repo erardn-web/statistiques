@@ -203,7 +203,7 @@ elif st.session_state.page == "factures":
             st.error(f"Erreur d'analyse : {e}")
 
 # ==========================================
-# 👨‍⚕️ MODULE MÉDECINS (TENDANCE LINÉAIRE)
+# 👨‍⚕️ MODULE MÉDECINS (CORRIGÉ & TENDANCE LINÉAIRE)
 # ==========================================
 elif st.session_state.page == "medecins":
     st.markdown("<style>.block-container { padding-left: 1rem; padding-right: 1rem; max-width: 100%; }</style>", unsafe_allow_html=True)
@@ -218,16 +218,15 @@ elif st.session_state.page == "medecins":
         try:
             df_brut = pd.read_excel(uploaded_file, header=0)
             fourn_med = sorted(df_brut.iloc[:, 9].dropna().unique().tolist())
-            sel_fourn_med = st.sidebar.multiselect("Fournisseurs :", fourn_med, default=fourn_med)
+            sel_fourn_med = st.sidebar.multiselect("Filtrer par Fournisseur :", fourn_med, default=fourn_med)
             
             df_m = df_brut[df_brut.iloc[:, 9].isin(sel_fourn_med)].copy()
-            df_m["medecin"] = df_m.iloc[:, 7]
-            df_m["ca"] = pd.to_numeric(df_m.iloc[:, 14], errors="coerce").fillna(0)
-            df_m["date_f"] = df_m.iloc[:, 2].apply(convertir_date)
+            df_m["medecin"] = df_m.iloc[:, 7] 
+            df_m["ca"] = pd.to_numeric(df_m.iloc[:, 14], errors="coerce").fillna(0) 
+            df_m["date_f"] = df_m.iloc[:, 2].apply(convertir_date) 
             df_m = df_m[(df_m["ca"] > 0) & (df_m["date_f"].notna()) & (df_m["medecin"].notna())].copy()
             
             if not df_m.empty:
-                # --- CALCULS TENDANCE 90/365 ---
                 ajd = pd.Timestamp(datetime.today())
                 t_90j, t_365j = ajd - pd.DateOffset(days=90), ajd - pd.DateOffset(days=365)
                 stats_ca = df_m.groupby("medecin")["ca"].sum().reset_index(name="CA Global")
@@ -241,44 +240,36 @@ elif st.session_state.page == "medecins":
                     return f"↘️ Baisse ({ratio:.1f}%)" if ratio <= 23 else (f"↗️ Hausse ({ratio:.1f}%)" if ratio >= 27 else f"➡️ Stable ({ratio:.1f}%)")
                 tab_final["Tendance"] = tab_final.apply(calc_t, axis=1)
 
-                # --- INTERFACE ---
                 st.markdown("### 🏆 Sélection et Visualisation")
                 c1, c2, c3 = st.columns([1, 1, 1.5])
                 with c1: m_top = st.selectbox("Top :", [5, 10, 25, 50, "Tout"], index=1)
                 with c2: t_graph = st.radio("Style :", ["📊 Barres", "📈 Lignes"], horizontal=True)
                 with c3: visibility = st.radio("Affichage :", ["Données", "Tendance Linéaire", "Les deux"], index=0, horizontal=True)
 
-                tab_s = tab_final.sort_values("CA Global", ascending=False)
-                def_sel = tab_s["medecin"].tolist() if m_top == "Tout" else tab_s.head(int(m_top))["medecin"].tolist()
-                choix = st.multiselect("Médecins :", options=sorted(tab_final["medecin"].unique()), default=def_sel)
+                tab_sorted = tab_final.sort_values("CA Global", ascending=False)
+                def_sel = tab_sorted["medecin"].tolist() if m_top == "Tout" else tab_sorted.head(int(m_top))["medecin"].tolist()
+                choix = st.multiselect("Affiner la sélection :", options=sorted(tab_final["medecin"].unique()), default=def_sel)
 
                 if choix:
                     df_p = df_m[df_m["medecin"].isin(choix)].copy()
-                    # Tri essentiel pour la régression
                     df_p = df_p.sort_values("date_f")
                     df_p["Mois"] = df_p["date_f"].dt.to_period("M").astype(str)
                     df_p = df_p.groupby(["Mois", "medecin"])["ca"].sum().reset_index()
 
-                    # --- GRAPHIQUE ALTAIR ---
                     base = alt.Chart(df_p).encode(
-                        x=alt.X('Mois:O', title="Mois", sort=None), # sort=None car déjà trié en amont
+                        x=alt.X('Mois:O', title="Mois", sort=None),
                         y=alt.Y('ca:Q', title="CA (CHF)"),
                         color=alt.Color('medecin:N', legend=alt.Legend(orient='bottom', columns=5))
                     ).properties(height=600)
 
-                    # 1. Couche Données
                     data_layer = base.mark_bar(opacity=0.6) if "Barres" in t_graph else base.mark_line(point=True)
+                    # CORRECTION ICI : strokeDash=[6,4] ajouté
+                    trend_layer = base.transform_regression('Mois', 'ca', groupby=['medecin']).mark_line(size=3, strokeDash=[6,4])
 
-                    # 2. Couche Tendance Linéaire (Droite de régression)
-                    trend_layer = base.transform_regression(
-                        'Mois', 'ca', groupby=['medecin']
-                    ).mark_line(size=3, strokeDash=)
-
-                    # Affichage conditionnel
                     if visibility == "Données": chart = data_layer
                     elif visibility == "Tendance Linéaire": chart = trend_layer
                     else: chart = data_layer + trend_layer
 
                     st.altair_chart(chart, use_container_width=True)
                     st.dataframe(tab_final[tab_final["medecin"].isin(choix)].sort_values("CA Global", ascending=False)[["medecin", "CA Global", "CA 365j", "CA 90j", "Tendance"]], use_container_width=True, hide_index=True)
-        except Exception as e: st.error(f"Erreur : {e}")
+        except Exception as e: st.error(f"Erreur technique : {e}")
