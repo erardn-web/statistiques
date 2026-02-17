@@ -203,7 +203,7 @@ elif st.session_state.page == "factures":
             st.error(f"Erreur d'analyse : {e}")
 
 # ==========================================
-# 👨‍⚕️ MODULE MÉDECINS (AVEC COURBE DE TENDANCE)
+# 👨‍⚕️ MODULE MÉDECINS (AVEC MOYENNE MOBILE)
 # ==========================================
 elif st.session_state.page == "medecins":
     st.markdown("<style>.block-container { padding-left: 1rem; padding-right: 1rem; max-width: 100%; }</style>", unsafe_allow_html=True)
@@ -227,76 +227,59 @@ elif st.session_state.page == "medecins":
             df_m = df_m[(df_m["ca"] > 0) & (df_m["date_f"].notna()) & (df_m["medecin"].notna())].copy()
             
             if not df_m.empty:
+                # --- CALCULS TENDANCE 90/365 ---
                 ajd = pd.Timestamp(datetime.today())
-                t_90j = ajd - pd.DateOffset(days=90)
-                t_365j = ajd - pd.DateOffset(days=365)
-
+                t_90j, t_365j = ajd - pd.DateOffset(days=90), ajd - pd.DateOffset(days=365)
                 stats_ca = df_m.groupby("medecin")["ca"].sum().reset_index(name="CA Global")
                 ca_90 = df_m[df_m["date_f"] >= t_90j].groupby("medecin")["ca"].sum().reset_index(name="CA 90j")
                 ca_365 = df_m[df_m["date_f"] >= t_365j].groupby("medecin")["ca"].sum().reset_index(name="CA 365j")
-                
                 tab_final = stats_ca.merge(ca_90, on="medecin", how="left").merge(ca_365, on="medecin", how="left").fillna(0)
 
-                def calc_tendance_ratio(row):
+                def calc_t(row):
                     if row["CA 365j"] <= 0: return "⚪ Inconnu"
                     ratio = (row["CA 90j"] / row["CA 365j"]) * 100
-                    if ratio <= 23: return f"↘️ Baisse ({ratio:.1f}%)"
-                    elif 23 < ratio < 27: return f"➡️ Stable ({ratio:.1f}%)"
-                    else: return f"↗️ Hausse ({ratio:.1f}%)"
+                    return f"↘️ Baisse ({ratio:.1f}%)" if ratio <= 23 else (f"↗️ Hausse ({ratio:.1f}%)" if ratio >= 27 else f"➡️ Stable ({ratio:.1f}%)")
+                tab_final["Tendance"] = tab_final.apply(calc_t, axis=1)
 
-                tab_final["Tendance"] = tab_final.apply(calc_tendance_ratio, axis=1)
-
+                # --- INTERFACE ---
                 st.markdown("### 🏆 Sélection et Visualisation")
-                c1, c2, c3 = st.columns([1, 1, 1.5]) 
-                with c1: m_top = st.selectbox("Afficher le Top :", [5, 10, 25, 50, "Tout"], index=1)
-                with c2: t_graph = st.radio("Style de base :", ["📊 Barres", "📈 Courbes"], horizontal=True)
-                with c3: visibility = st.radio("Affichage Courbe de Tendance :", 
-                                              ["Données seules", "Tendance seule", "Données + Tendance"], 
-                                              index=0, horizontal=True)
+                c1, c2, c3 = st.columns([1, 1, 1.5])
+                with c1: m_top = st.selectbox("Top :", [5, 10, 25, 50, "Tout"], index=1)
+                with c2: t_graph = st.radio("Style :", ["📊 Barres", "📈 Lignes"], horizontal=True)
+                with c3: visibility = st.radio("Affichage :", ["Données", "Tendance", "Les deux"], index=0, horizontal=True)
 
                 tab_s = tab_final.sort_values("CA Global", ascending=False)
                 def_sel = tab_s["medecin"].tolist() if m_top == "Tout" else tab_s.head(int(m_top))["medecin"].tolist()
-                choix = st.multiselect("Affiner la sélection des médecins :", options=sorted(tab_final["medecin"].unique()), default=def_sel)
+                choix = st.multiselect("Médecins :", options=sorted(tab_final["medecin"].unique()), default=def_sel)
 
                 if choix:
                     df_p = df_m[df_m["medecin"].isin(choix)].copy()
+                    df_p = df_p.sort_values("date_f")
                     df_p["Mois"] = df_p["date_f"].dt.to_period("M").astype(str)
                     df_p = df_p.groupby(["Mois", "medecin"])["ca"].sum().reset_index()
 
-                    # --- CONSTRUCTION DU GRAPHIQUE ALTAIR ---
+                    # --- GRAPHIQUE ALTAIR ---
                     base = alt.Chart(df_p).encode(
-                        x=alt.X('Mois:O', title="Période"),
-                        y=alt.Y('ca:Q', title="CA encaissé (CHF)"),
-                        color=alt.Color('medecin:N', legend=alt.Legend(orient='bottom', columns=5, labelLimit=0))
+                        x=alt.X('Mois:O', title="Mois"),
+                        y=alt.Y('ca:Q', title="CA (CHF)"),
+                        color=alt.Color('medecin:N', legend=alt.Legend(orient='bottom', columns=5))
                     ).properties(height=600)
 
-                    # Couche 1 : Les données brutes (Barres ou Lignes)
-                    if "Barres" in t_graph:
-                        data_layer = base.mark_bar(opacity=0.7)
-                    else:
-                        data_layer = base.mark_line(point=True, strokeWidth=2)
+                    # 1. Couche Données
+                    data_layer = base.mark_bar(opacity=0.6) if "Barres" in t_graph else base.mark_line(point=True)
 
-                    # Couche 2 : La courbe de tendance (Régression polynomiale pour lisser)
-                    trend_layer = base.transform_regression(
-                        'Mois', 'ca', groupby=['medecin'], method='poly', order=3
-                    ).mark_line(strokeDash=[5, 5], strokeWidth=3)
+                    # 2. Couche Tendance (Moyenne Mobile sur 3 mois)
+                    trend_layer = base.transform_window(
+                        rolling_mean='mean(ca)',
+                        frame=[-2, 0],
+                        groupby=['medecin']
+                    ).mark_line(size=4, strokeDash=[5, 5]).encode(y='rolling_mean:Q')
 
-                    # Logique d'affichage
-                    if visibility == "Données seules":
-                        final_chart = data_layer
-                    elif visibility == "Tendance seule":
-                        final_chart = trend_layer
-                    else:
-                        final_chart = data_layer + trend_layer
+                    # Affichage conditionnel
+                    if visibility == "Données": chart = data_layer
+                    elif visibility == "Tendance": chart = trend_layer
+                    else: chart = data_layer + trend_layer
 
-                    st.altair_chart(final_chart, use_container_width=True)
-                    
-                    # Tableau récapitulatif
-                    st.subheader("📊 Détails des performances")
-                    st.dataframe(
-                        tab_final[tab_final["medecin"].isin(choix)]
-                        .sort_values("CA Global", ascending=False)[["medecin", "CA Global", "CA 365j", "CA 90j", "Tendance"]]
-                        .style.format({"CA Global": "{:,.2f} CHF", "CA 365j": "{:,.2f} CHF", "CA 90j": "{:,.2f} CHF"}),
-                        use_container_width=True, hide_index=True
-                    )
-        except Exception as e: st.error(f"Erreur technique : {e}")
+                    st.altair_chart(chart, use_container_width=True)
+                    st.dataframe(tab_final[tab_final["medecin"].isin(choix)].sort_values("CA Global", ascending=False)[["medecin", "CA Global", "CA 365j", "CA 90j", "Tendance"]], use_container_width=True, hide_index=True)
+        except Exception as e: st.error(f"Erreur : {e}")
