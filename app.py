@@ -203,7 +203,7 @@ elif st.session_state.page == "factures":
             st.error(f"Erreur d'analyse : {e}")
 
 # ==========================================
-# 👨‍⚕️ MODULE MÉDECINS (CORRIGÉ & TENDANCE LINÉAIRE)
+# 👨‍⚕️ MODULE MÉDECINS (TENDANCE LINÉAIRE CORRIGÉE)
 # ==========================================
 elif st.session_state.page == "medecins":
     st.markdown("<style>.block-container { padding-left: 1rem; padding-right: 1rem; max-width: 100%; }</style>", unsafe_allow_html=True)
@@ -227,6 +227,7 @@ elif st.session_state.page == "medecins":
             df_m = df_m[(df_m["ca"] > 0) & (df_m["date_f"].notna()) & (df_m["medecin"].notna())].copy()
             
             if not df_m.empty:
+                # --- CALCULS TENDANCE 90/365 ---
                 ajd = pd.Timestamp(datetime.today())
                 t_90j, t_365j = ajd - pd.DateOffset(days=90), ajd - pd.DateOffset(days=365)
                 stats_ca = df_m.groupby("medecin")["ca"].sum().reset_index(name="CA Global")
@@ -256,16 +257,28 @@ elif st.session_state.page == "medecins":
                     df_p["Mois"] = df_p["date_f"].dt.to_period("M").astype(str)
                     df_p = df_p.groupby(["Mois", "medecin"])["ca"].sum().reset_index()
 
+                    # --- ASTUCE POUR LA RÉGRESSION SUR AXE TEXTE ---
+                    # On crée une colonne 'x_index' numérique pour la régression
+                    mois_uniques = sorted(df_p["Mois"].unique())
+                    mapping_mois = {m: i for i, m in enumerate(mois_uniques)}
+                    df_p["x_index"] = df_p["Mois"].map(mapping_mois)
+
+                    # Graphique de base
                     base = alt.Chart(df_p).encode(
-                        x=alt.X('Mois:O', title="Mois", sort=None),
+                        x=alt.X('Mois:O', title="Mois", sort=mois_uniques),
                         y=alt.Y('ca:Q', title="CA (CHF)"),
                         color=alt.Color('medecin:N', legend=alt.Legend(orient='bottom', columns=5))
                     ).properties(height=600)
 
+                    # 1. Couche Données (Barres ou Lignes)
                     data_layer = base.mark_bar(opacity=0.6) if "Barres" in t_graph else base.mark_line(point=True)
-                    # CORRECTION ICI : strokeDash=[6,4] ajouté
-                    trend_layer = base.transform_regression('Mois', 'ca', groupby=['medecin']).mark_line(size=3, strokeDash=[6,4])
 
+                    # 2. Couche Tendance Linéaire (utilisant x_index au lieu de Mois)
+                    trend_layer = base.transform_regression(
+                        'x_index', 'ca', groupby=['medecin']
+                    ).mark_line(size=4, strokeDash=)
+
+                    # Affichage conditionnel
                     if visibility == "Données": chart = data_layer
                     elif visibility == "Tendance Linéaire": chart = trend_layer
                     else: chart = data_layer + trend_layer
