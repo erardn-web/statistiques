@@ -203,7 +203,7 @@ elif st.session_state.page == "factures":
             st.error(f"Erreur d'analyse : {e}")
 
 # ==========================================
-# 👨‍⚕️ MODULE MÉDECINS (AVEC MOYENNE MOBILE)
+# 👨‍⚕️ MODULE MÉDECINS (TENDANCE LINÉAIRE)
 # ==========================================
 elif st.session_state.page == "medecins":
     st.markdown("<style>.block-container { padding-left: 1rem; padding-right: 1rem; max-width: 100%; }</style>", unsafe_allow_html=True)
@@ -246,7 +246,7 @@ elif st.session_state.page == "medecins":
                 c1, c2, c3 = st.columns([1, 1, 1.5])
                 with c1: m_top = st.selectbox("Top :", [5, 10, 25, 50, "Tout"], index=1)
                 with c2: t_graph = st.radio("Style :", ["📊 Barres", "📈 Lignes"], horizontal=True)
-                with c3: visibility = st.radio("Affichage :", ["Données", "Tendance", "Les deux"], index=0, horizontal=True)
+                with c3: visibility = st.radio("Affichage :", ["Données", "Tendance Linéaire", "Les deux"], index=0, horizontal=True)
 
                 tab_s = tab_final.sort_values("CA Global", ascending=False)
                 def_sel = tab_s["medecin"].tolist() if m_top == "Tout" else tab_s.head(int(m_top))["medecin"].tolist()
@@ -254,13 +254,14 @@ elif st.session_state.page == "medecins":
 
                 if choix:
                     df_p = df_m[df_m["medecin"].isin(choix)].copy()
+                    # Tri essentiel pour la régression
                     df_p = df_p.sort_values("date_f")
                     df_p["Mois"] = df_p["date_f"].dt.to_period("M").astype(str)
                     df_p = df_p.groupby(["Mois", "medecin"])["ca"].sum().reset_index()
 
                     # --- GRAPHIQUE ALTAIR ---
                     base = alt.Chart(df_p).encode(
-                        x=alt.X('Mois:O', title="Mois"),
+                        x=alt.X('Mois:O', title="Mois", sort=None), # sort=None car déjà trié en amont
                         y=alt.Y('ca:Q', title="CA (CHF)"),
                         color=alt.Color('medecin:N', legend=alt.Legend(orient='bottom', columns=5))
                     ).properties(height=600)
@@ -268,16 +269,14 @@ elif st.session_state.page == "medecins":
                     # 1. Couche Données
                     data_layer = base.mark_bar(opacity=0.6) if "Barres" in t_graph else base.mark_line(point=True)
 
-                    # 2. Couche Tendance (Moyenne Mobile sur 3 mois)
-                    trend_layer = base.transform_window(
-                        rolling_mean='mean(ca)',
-                        frame=[-2, 0],
-                        groupby=['medecin']
-                    ).mark_line(size=4, strokeDash=[5, 5]).encode(y='rolling_mean:Q')
+                    # 2. Couche Tendance Linéaire (Droite de régression)
+                    trend_layer = base.transform_regression(
+                        'Mois', 'ca', groupby=['medecin']
+                    ).mark_line(size=3, strokeDash=)
 
                     # Affichage conditionnel
                     if visibility == "Données": chart = data_layer
-                    elif visibility == "Tendance": chart = trend_layer
+                    elif visibility == "Tendance Linéaire": chart = trend_layer
                     else: chart = data_layer + trend_layer
 
                     st.altair_chart(chart, use_container_width=True)
