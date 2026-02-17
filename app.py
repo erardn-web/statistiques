@@ -203,7 +203,7 @@ elif st.session_state.page == "factures":
             st.error(f"Erreur d'analyse : {e}")
 
 # ==========================================
-# 👨‍⚕️ MODULE MÉDECINS (OPTI XXL)
+# 👨‍⚕️ MODULE MÉDECINS (AVEC COURBE DE TENDANCE)
 # ==========================================
 elif st.session_state.page == "medecins":
     st.markdown("<style>.block-container { padding-left: 1rem; padding-right: 1rem; max-width: 100%; }</style>", unsafe_allow_html=True)
@@ -247,9 +247,12 @@ elif st.session_state.page == "medecins":
                 tab_final["Tendance"] = tab_final.apply(calc_tendance_ratio, axis=1)
 
                 st.markdown("### 🏆 Sélection et Visualisation")
-                c1, c2 = st.columns(2) 
+                c1, c2, c3 = st.columns([1, 1, 1.5]) 
                 with c1: m_top = st.selectbox("Afficher le Top :", [5, 10, 25, 50, "Tout"], index=1)
-                with c2: t_graph = st.radio("Style :", ["📊 Barres", "📈 Courbes"], horizontal=True)
+                with c2: t_graph = st.radio("Style de base :", ["📊 Barres", "📈 Courbes"], horizontal=True)
+                with c3: visibility = st.radio("Affichage Courbe de Tendance :", 
+                                              ["Données seules", "Tendance seule", "Données + Tendance"], 
+                                              index=0, horizontal=True)
 
                 tab_s = tab_final.sort_values("CA Global", ascending=False)
                 def_sel = tab_s["medecin"].tolist() if m_top == "Tout" else tab_s.head(int(m_top))["medecin"].tolist()
@@ -260,12 +263,40 @@ elif st.session_state.page == "medecins":
                     df_p["Mois"] = df_p["date_f"].dt.to_period("M").astype(str)
                     df_p = df_p.groupby(["Mois", "medecin"])["ca"].sum().reset_index()
 
-                    chart_base = alt.Chart(df_p).encode(
-                        x=alt.X('Mois:O', title="Mois"),
+                    # --- CONSTRUCTION DU GRAPHIQUE ALTAIR ---
+                    base = alt.Chart(df_p).encode(
+                        x=alt.X('Mois:O', title="Période"),
                         y=alt.Y('ca:Q', title="CA encaissé (CHF)"),
                         color=alt.Color('medecin:N', legend=alt.Legend(orient='bottom', columns=5, labelLimit=0))
                     ).properties(height=600)
+
+                    # Couche 1 : Les données brutes (Barres ou Lignes)
+                    if "Barres" in t_graph:
+                        data_layer = base.mark_bar(opacity=0.7)
+                    else:
+                        data_layer = base.mark_line(point=True, strokeWidth=2)
+
+                    # Couche 2 : La courbe de tendance (Régression polynomiale pour lisser)
+                    trend_layer = base.transform_regression(
+                        'Mois', 'ca', groupby=['medecin'], method='poly', order=3
+                    ).mark_line(strokeDash=[5, 5], strokeWidth=3)
+
+                    # Logique d'affichage
+                    if visibility == "Données seules":
+                        final_chart = data_layer
+                    elif visibility == "Tendance seule":
+                        final_chart = trend_layer
+                    else:
+                        final_chart = data_layer + trend_layer
+
+                    st.altair_chart(final_chart, use_container_width=True)
                     
-                    st.altair_chart(chart_base.mark_line(point=True) if "Courbes" in t_graph else chart_base.mark_bar(), use_container_width=True)
-                    st.dataframe(tab_final[tab_final["medecin"].isin(choix)].sort_values("CA Global", ascending=False)[["medecin", "CA Global", "CA 365j", "CA 90j", "Tendance"]], use_container_width=True, hide_index=True)
+                    # Tableau récapitulatif
+                    st.subheader("📊 Détails des performances")
+                    st.dataframe(
+                        tab_final[tab_final["medecin"].isin(choix)]
+                        .sort_values("CA Global", ascending=False)[["medecin", "CA Global", "CA 365j", "CA 90j", "Tendance"]]
+                        .style.format({"CA Global": "{:,.2f} CHF", "CA 365j": "{:,.2f} CHF", "CA 90j": "{:,.2f} CHF"}),
+                        use_container_width=True, hide_index=True
+                    )
         except Exception as e: st.error(f"Erreur technique : {e}")
