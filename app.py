@@ -201,112 +201,6 @@ elif st.session_state.page == "factures":
 
         except Exception as e:
             st.error(f"Erreur d'analyse : {e}")
-
-import streamlit as st
-import pandas as pd
-from datetime import datetime
-import altair as alt
-
-# --- CONFIGURATION PAGE WEB ---
-st.set_page_config(page_title="Analyseur de Facturation Pro", layout="wide", page_icon="🏥")
-
-# --- INITIALISATION DE L'ÉTAT ---
-if 'page' not in st.session_state:
-    st.session_state.page = "accueil"
-if 'analyse_lancee' not in st.session_state:
-    st.session_state.analyse_lancee = False
-
-# --- LOGIQUE DE CALCUL (TES FONCTIONS ORIGINALES) ---
-def convertir_date(val):
-    if pd.isna(val) or str(val).strip() == "": return pd.NaT
-    if isinstance(val, pd.Timestamp): return val
-    try:
-        return pd.to_datetime(str(val).strip(), format="%d.%m.%Y", errors="coerce")
-    except:
-        return pd.NaT
-
-def calculer_liquidites_fournisseur(f_attente, p_hist, jours_horizons):
-    liq = {h: 0.0 for h in jours_horizons}
-    taux_glob = {h: 0.0 for h in jours_horizons}
-    if p_hist.empty: return liq, taux_glob
-    for h in jours_horizons:
-        stats_croisees = p_hist.groupby(["assureur", "fournisseur"])["delai"].apply(lambda x: (x <= h).mean()).to_dict()
-        stats_fourn = p_hist.groupby("fournisseur")["delai"].apply(lambda x: (x <= h).mean()).to_dict()
-        taux_glob[h] = (p_hist["delai"] <= h).mean()
-        total_h = 0.0
-        for _, row in f_attente.iterrows():
-            key = (row["assureur"], row["fournisseur"])
-            prob = stats_croisees.get(key, stats_fourn.get(row["fournisseur"], taux_glob[h]))
-            total_h += row["montant"] * prob
-        liq[h] = total_h
-    return liq, taux_glob
-
-# ==========================================
-# 🏠 PAGE D'ACCUEIL
-# ==========================================
-if st.session_state.page == "accueil":
-    st.title("🏥 Assistant d'Analyse de Facturation")
-    st.markdown("---")
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("📊 ANALYSE FACTURATION", use_container_width=True):
-            st.session_state.page = "factures"
-            st.rerun()
-    with col2:
-        if st.button("🩺 ANALYSE MÉDECINS", use_container_width=True):
-            st.session_state.page = "medecins"
-            st.rerun()
-
-# ==========================================
-# 📊 MODULE FACTURES
-# ==========================================
-elif st.session_state.page == "factures":
-    if st.sidebar.button("⬅️ Retour Accueil"):
-        st.session_state.page = "accueil"
-        st.rerun()
-
-    st.title("📊 Analyse de la Facturation")
-    uploaded_file = st.sidebar.file_uploader("Charger le fichier Excel (.xlsx)", type="xlsx", key="fact_file")
-
-    if uploaded_file:
-        try:
-            df_brut = pd.read_excel(uploaded_file, header=0)
-            st.sidebar.header("🔍 Filtres")
-            fournisseurs = sorted(df_brut.iloc[:, 9].dropna().unique().tolist())
-            sel_fournisseurs = st.sidebar.multiselect("Fournisseurs :", options=fournisseurs, default=fournisseurs)
-            lois = sorted(df_brut.iloc[:, 4].dropna().unique().tolist())
-            sel_lois = st.sidebar.multiselect("Types de Loi :", options=lois, default=lois)
-            
-            st.sidebar.header("📊 Options")
-            show_med = st.sidebar.checkbox("Afficher la Médiane", value=True)
-            show_std = st.sidebar.checkbox("Afficher l'Écart-type", value=True)
-            
-            options_p = {"Global": None, "6 mois": 6, "4 mois": 4, "3 mois": 3, "2 mois": 2, "1 mois": 1}
-            periods_sel = st.sidebar.multiselect("Analyser les périodes :", list(options_p.keys()), default=["Global", "4 mois"])
-            date_cible = st.sidebar.date_input("Date cible (simulation) :", value=datetime.today())
-            
-            col_b1, col_b2 = st.sidebar.columns(2)
-            if col_b1.button("🚀 Analyser", type="primary", use_container_width=True):
-                st.session_state.analyse_lancee = True
-            btn_simuler = col_b2.button("🔮 Simuler", use_container_width=True)
-
-            df = df_brut[(df_brut.iloc[:, 9].isin(sel_fournisseurs)) & (df_brut.iloc[:, 4].isin(sel_lois))].copy()
-            df = df.rename(columns={df.columns[2]: "date_facture", df.columns[4]: "loi", df.columns[8]: "assureur", df.columns[9]: "fournisseur", df.columns[12]: "statut", df.columns[13]: "montant", df.columns[15]: "date_paiement"})
-            df["date_facture"] = df["date_facture"].apply(convertir_date)
-            df["date_paiement"] = df["date_paiement"].apply(convertir_date)
-            df = df[df["date_facture"].notna()].copy()
-            df["montant"] = pd.to_numeric(df["montant"], errors="coerce").fillna(0)
-            df["statut"] = df["statut"].astype(str).str.lower().str.strip()
-            df["assureur"] = df["assureur"].fillna("Patient")
-            ajd = pd.Timestamp(datetime.today().date())
-            f_att = df[df["statut"].str.startswith("en attente") & (df["statut"] != "en attente (annulé)")].copy()
-            st.metric("💰 TOTAL BRUT EN ATTENTE", f"{f_att['montant'].sum():,.2f} CHF")
-
-            if st.session_state.analyse_lancee:
-                tab1, tab2, tab3, tab4 = st.tabs(["💰 Liquidités", "🕒 Délais", "⚠️ Retards", "📈 Évolution"])
-                # (Tes onglets originaux s'exécutent ici)
-        except Exception as e: st.error(f"Erreur : {e}")
-
 # ==========================================
 # 👨‍⚕️ MODULE MÉDECINS (FILTRE FOURNISSEUR INCLUS)
 # ==========================================
@@ -401,3 +295,4 @@ elif st.session_state.page == "medecins":
                     st.altair_chart(chart, use_container_width=True)
                     st.dataframe(tab_final[tab_final["medecin"].isin(choix)].sort_values("CA Global", ascending=False)[["medecin", "CA Global", "CA 365j", "CA 90j", "Tendance"]], use_container_width=True, hide_index=True)
         except Exception as e: st.error(f"Erreur technique : {e}")
+
