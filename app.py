@@ -203,7 +203,7 @@ elif st.session_state.page == "factures":
             st.error(f"Erreur d'analyse : {e}")
 
 # ==========================================
-# 👨‍⚕️ MODULE MÉDECINS (TENDANCE LINÉAIRE FIXÉE)
+# 👨‍⚕️ MODULE MÉDECINS (FUSION AUTOMATIQUE)
 # ==========================================
 elif st.session_state.page == "medecins":
     st.markdown("<style>.block-container { padding-left: 1rem; padding-right: 1rem; max-width: 100%; }</style>", unsafe_allow_html=True)
@@ -212,13 +212,37 @@ elif st.session_state.page == "medecins":
         st.rerun()
 
     st.header("👨‍⚕️ Performance Médecins")
-    uploaded_file = st.sidebar.file_uploader("Charger le fichier Excel (.xlsx)", type="xlsx", key="med_up")
+    uploaded_file = st.sidebar.file_uploader("Fichier Excel (.xlsx)", type="xlsx", key="med_up")
     
     if uploaded_file:
         try:
             df_brut = pd.read_excel(uploaded_file, header=0)
+            
+            # --- MOTEUR DE FUSION AUTOMATIQUE ---
+            def automatiser_regroupement(df):
+                noms_uniques = df.iloc[:, 7].dropna().unique()
+                mapping = {}
+                # On trie par longueur pour garder le nom le plus complet comme référence
+                noms_tries = sorted(noms_uniques, key=len, reverse=True)
+                
+                for i, nom_long in enumerate(noms_tries):
+                    for nom_court in noms_tries[i+1:]:
+                        # Si le nom court est contenu dans le nom long (ex: LOZANO dans LOZANO BECARRA)
+                        # ou si les deux noms partagent au moins 2 mots significatifs
+                        mots_long = set(str(nom_long).upper().split())
+                        mots_court = set(str(nom_court).upper().split())
+                        intersection = mots_long.intersection(mots_court)
+                        
+                        if len(intersection) >= 2: # Seuil de 2 mots identiques
+                            mapping[nom_court] = nom_long
+                return mapping
+
+            regroupements = automatiser_regroupement(df_brut)
+            df_brut.iloc[:, 7] = df_brut.iloc[:, 7].replace(regroupements)
+            # ------------------------------------
+
             fourn_med = sorted(df_brut.iloc[:, 9].dropna().unique().tolist())
-            sel_fourn_med = st.sidebar.multiselect("Filtrer par Fournisseur :", fourn_med, default=fourn_med)
+            sel_fourn_med = st.sidebar.multiselect("Fournisseurs :", fourn_med, default=fourn_med)
             
             df_m = df_brut[df_brut.iloc[:, 9].isin(sel_fourn_med)].copy()
             df_m["medecin"] = df_m.iloc[:, 7]
@@ -243,7 +267,7 @@ elif st.session_state.page == "medecins":
 
                 st.markdown("### 🏆 Sélection et Visualisation")
                 c1, c2, c3 = st.columns([1, 1, 1.5]) 
-                with c1: m_top = st.selectbox("Afficher le Top :", [5, 10, 25, 50, "Tout"], index=1)
+                with c1: m_top = st.selectbox("Top :", [5, 10, 25, 50, "Tout"], index=1)
                 with c2: t_graph = st.radio("Style :", ["📊 Barres", "📈 Courbes"], horizontal=True)
                 with c3: visibility = st.radio("Option Tendance :", ["Données", "Tendance Linéaire", "Les deux"], index=0, horizontal=True)
 
@@ -257,26 +281,26 @@ elif st.session_state.page == "medecins":
                     df_p["Mois_Date"] = df_p["date_f"].dt.to_period("M").dt.to_timestamp()
                     df_p = df_p.groupby(["Mois_Date", "medecin"])["ca"].sum().reset_index()
 
-                    # Graphique Altair
+                    # Graphique avec légende "Multi-lignes" corrigée
                     base = alt.Chart(df_p).encode(
                         x=alt.X('Mois_Date:T', title="Mois", axis=alt.Axis(format='%m.%Y', labelAngle=-45)),
                         y=alt.Y('ca:Q', title="CA (CHF)"),
-                        color=alt.Color('medecin:N', legend=alt.Legend(orient='bottom', columns=5))
+                        color=alt.Color('medecin:N', legend=alt.Legend(
+                            orient='bottom', 
+                            columns=2,          # Forcer 2 colonnes pour laisser bcp de place au texte
+                            labelLimit=0,       # Autoriser n'importe quelle longueur de texte
+                            symbolType='stroke'
+                        ))
                     ).properties(height=600)
 
-                    # Données (Barres ou Lignes)
                     data_layer = base.mark_bar(opacity=0.6) if "Barres" in t_graph else base.mark_line(point=True)
+                    trend_layer = base.transform_regression('Mois_Date', 'ca', groupby=['medecin']).mark_line(size=4, strokeDash=)
 
-                    # Tendance Linéaire (strokeDash=[6,4] pour les pointillés)
-                    trend_layer = base.transform_regression(
-                        'Mois_Date', 'ca', groupby=['medecin']
-                    ).mark_line(size=4, strokeDash=[6,4])
+                    st.altair_chart(data_layer + trend_layer if visibility == "Les deux" else (trend_layer if visibility == "Tendance Linéaire" else data_layer), use_container_width=True)
+                    
+                    if len(regroupements) > 0:
+                        with st.expander("ℹ️ Info : Regroupements automatiques effectués"):
+                            st.write(regroupements)
 
-                    # Affichage final
-                    if visibility == "Données": chart = data_layer
-                    elif visibility == "Tendance Linéaire": chart = trend_layer
-                    else: chart = data_layer + trend_layer
-
-                    st.altair_chart(chart, use_container_width=True)
                     st.dataframe(tab_final[tab_final["medecin"].isin(choix)].sort_values("CA Global", ascending=False)[["medecin", "CA Global", "CA 365j", "CA 90j", "Tendance"]], use_container_width=True, hide_index=True)
         except Exception as e: st.error(f"Erreur technique : {e}")
