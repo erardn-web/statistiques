@@ -203,7 +203,7 @@ elif st.session_state.page == "factures":
             st.error(f"Erreur d'analyse : {e}")
 
 # ==========================================
-# 👨‍⚕️ MODULE MÉDECINS (FUSION RENFORCÉE & FIX SYNTAXE)
+# 👨‍⚕️ MODULE MÉDECINS (FUSION SÉCURISÉE)
 # ==========================================
 elif st.session_state.page == "medecins":
     st.markdown("<style>.block-container { padding-left: 1rem; padding-right: 1rem; max-width: 100%; }</style>", unsafe_allow_html=True)
@@ -212,18 +212,21 @@ elif st.session_state.page == "medecins":
         st.rerun()
 
     st.header("👨‍⚕️ Performance Médecins")
+    
+    # --- LISTE DES MOTS QUI INTERDISENT LA FUSION (SÉCURITÉ) ---
+    MOTS_EXCLUSION = {"BERNOIS", "NEUCHATELOIS", "VALAISANS", "GENEVOIS", "VAUDOIS", "FRIBOURGEOIS"}
+
     uploaded_file = st.sidebar.file_uploader("Charger le fichier Excel (.xlsx)", type="xlsx", key="med_up")
     
     if uploaded_file:
         try:
             df_brut = pd.read_excel(uploaded_file, header=0)
             
-            # --- MOTEUR DE FUSION RENFORCÉ (Mots Communs) ---
-            def moteur_fusion_robuste(df):
+            # --- MOTEUR DE FUSION AVEC SÉCURITÉ GÉOGRAPHIQUE ---
+            def moteur_fusion_securise(df):
                 noms_originaux = df.iloc[:, 7].dropna().unique()
                 mapping = {}
                 def extraire_mots(texte):
-                    # Supprime ponctuation et ignore les mots de moins de 3 lettres
                     mots = "".join(c if c.isalnum() else " " for c in str(texte)).upper().split()
                     return {m for m in mots if len(m) > 2}
 
@@ -232,14 +235,26 @@ elif st.session_state.page == "medecins":
                     mots_long = extraire_mots(nom_long)
                     for nom_court in noms_tries[i+1:]:
                         mots_court = extraire_mots(nom_court)
-                        # Fusion si au moins 2 mots significatifs en commun (ex: LOZANO + JUAN)
-                        if len(mots_long.intersection(mots_court)) >= 2:
+                        
+                        # Intersection de mots
+                        communs = mots_long.intersection(mots_court)
+                        # Différences de mots
+                        differences = mots_long.symmetric_difference(mots_court)
+                        
+                        # CONDITION DE FUSION :
+                        # 1. Au moins 2 mots en commun
+                        # 2. AUCUN mot de la liste d'exclusion ne doit être dans les différences
+                        # (Si l'un a "Bernois" et l'autre pas, on ne fusionne pas)
+                        conflit_exclusion = any(m in differences for m in MOTS_EXCLUSION)
+
+                        if len(communs) >= 2 and not conflit_exclusion:
                             mapping[nom_court] = nom_long
                 return mapping
 
-            regroupements = moteur_fusion_robuste(df_brut)
+            regroupements = moteur_fusion_securise(df_brut)
             df_brut.iloc[:, 7] = df_brut.iloc[:, 7].replace(regroupements)
             
+            # --- CALCULS CONSOLIDÉS ---
             fourn_med = sorted(df_brut.iloc[:, 9].dropna().unique().tolist())
             sel_fourn_med = st.sidebar.multiselect("Filtrer par Fournisseur :", fourn_med, default=fourn_med)
             
@@ -282,8 +297,7 @@ elif st.session_state.page == "medecins":
                     ).properties(height=600)
 
                     data_layer = base.mark_bar(opacity=0.6) if "Barres" in t_graph else base.mark_line(point=True)
-                    # strokeDash= CORRIGÉ avec [6, 4]
-                    trend_layer = base.transform_regression('Mois_Date', 'ca', groupby=['medecin']).mark_line(size=4, strokeDash=[6, 4])
+                    trend_layer = base.transform_regression('Mois_Date', 'ca', groupby=['medecin']).mark_line(size=4, strokeDash=[6,4])
 
                     if visibility == "Données": chart = data_layer
                     elif visibility == "Tendance Linéaire": chart = trend_layer
@@ -292,7 +306,7 @@ elif st.session_state.page == "medecins":
                     st.altair_chart(chart, use_container_width=True)
                     
                     if regroupements:
-                        with st.expander(f"🔗 {len(regroupements)} fusions automatiques effectuées"):
+                        with st.expander(f"🔗 {len(regroupements)} fusions effectuées"):
                             st.write(regroupements)
 
                     st.dataframe(tab_final[tab_final["medecin"].isin(choix)].sort_values("CA Global", ascending=False)[["medecin", "CA Global", "CA 365j", "CA 90j", "Tendance"]], use_container_width=True, hide_index=True)
