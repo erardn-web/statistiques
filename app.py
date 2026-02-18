@@ -203,10 +203,12 @@ elif st.session_state.page == "factures":
             st.error(f"Erreur d'analyse : {e}")
 
 # ==========================================
-# 👨‍⚕️ MODULE MÉDECINS (OPTI XXL)
+# 👨‍⚕️ MODULE MÉDECINS (VERSION FINALE OPTIMISÉE)
 # ==========================================
 elif st.session_state.page == "medecins":
+    # CSS pour maximiser la largeur d'affichage
     st.markdown("<style>.block-container { padding-left: 1rem; padding-right: 1rem; max-width: 100%; }</style>", unsafe_allow_html=True)
+    
     if st.sidebar.button("⬅️ Retour Accueil"):
         st.session_state.page = "accueil"
         st.rerun()
@@ -217,9 +219,12 @@ elif st.session_state.page == "medecins":
     if uploaded_file:
         try:
             df_brut = pd.read_excel(uploaded_file, header=0)
-            fourn_med = sorted(df_brut.iloc[:, 9].dropna().unique().tolist())
-            sel_fourn_med = st.sidebar.multiselect("Fournisseurs :", fourn_med, default=fourn_med)
             
+            # Filtre fournisseurs dans la sidebar
+            fourn_med = sorted(df_brut.iloc[:, 9].dropna().unique().tolist())
+            sel_fourn_med = st.sidebar.multiselect("Filtrer par Fournisseur :", fourn_med, default=fourn_med)
+            
+            # Préparation des données (Colonnes H=7, O=14, C=2, J=9)
             df_m = df_brut[df_brut.iloc[:, 9].isin(sel_fourn_med)].copy()
             df_m["medecin"] = df_m.iloc[:, 7]
             df_m["ca"] = pd.to_numeric(df_m.iloc[:, 14], errors="coerce").fillna(0)
@@ -231,12 +236,14 @@ elif st.session_state.page == "medecins":
                 t_90j = ajd - pd.DateOffset(days=90)
                 t_365j = ajd - pd.DateOffset(days=365)
 
+                # Calculs des CA par périodes
                 stats_ca = df_m.groupby("medecin")["ca"].sum().reset_index(name="CA Global")
                 ca_90 = df_m[df_m["date_f"] >= t_90j].groupby("medecin")["ca"].sum().reset_index(name="CA 90j")
                 ca_365 = df_m[df_m["date_f"] >= t_365j].groupby("medecin")["ca"].sum().reset_index(name="CA 365j")
                 
                 tab_final = stats_ca.merge(ca_90, on="medecin", how="left").merge(ca_365, on="medecin", how="left").fillna(0)
 
+                # Logique de Tendance (Vitalité 90j / 365j)
                 def calc_tendance_ratio(row):
                     if row["CA 365j"] <= 0: return "⚪ Inconnu"
                     ratio = (row["CA 90j"] / row["CA 365j"]) * 100
@@ -247,9 +254,10 @@ elif st.session_state.page == "medecins":
                 tab_final["Tendance"] = tab_final.apply(calc_tendance_ratio, axis=1)
 
                 st.markdown("### 🏆 Sélection et Visualisation")
-                c1, c2 = st.columns(2) 
+                c1, c2, c3 = st.columns([1, 1, 1.5]) 
                 with c1: m_top = st.selectbox("Afficher le Top :", [5, 10, 25, 50, "Tout"], index=1)
                 with c2: t_graph = st.radio("Style :", ["📊 Barres", "📈 Courbes"], horizontal=True)
+                with c3: visibility = st.radio("Option Tendance :", ["Données", "Tendance Linéaire", "Les deux"], index=0, horizontal=True)
 
                 tab_s = tab_final.sort_values("CA Global", ascending=False)
                 def_sel = tab_s["medecin"].tolist() if m_top == "Tout" else tab_s.head(int(m_top))["medecin"].tolist()
@@ -257,16 +265,45 @@ elif st.session_state.page == "medecins":
 
                 if choix:
                     df_p = df_m[df_m["medecin"].isin(choix)].copy()
+                    df_p = df_p.sort_values("date_f")
                     df_p["Mois"] = df_p["date_f"].dt.to_period("M").astype(str)
                     df_p = df_p.groupby(["Mois", "medecin"])["ca"].sum().reset_index()
 
-                    chart_base = alt.Chart(df_p).encode(
-                        x=alt.X('Mois:O', title="Mois"),
-                        y=alt.Y('ca:Q', title="CA encaissé (CHF)"),
+                    # Création d'un index numérique pour permettre la régression sur l'axe X
+                    mois_uniques = sorted(df_p["Mois"].unique())
+                    mapping_mois = {m: i for i, m in enumerate(mois_uniques)}
+                    df_p["x_index"] = df_p["Mois"].map(mapping_mois)
+
+                    # Graphique Altair XXL
+                    base = alt.Chart(df_p).encode(
+                        x=alt.X('Mois:O', title="Période", sort=mois_uniques),
+                        y=alt.Y('ca:Q', title="Chiffre d'Affaires (CHF)"),
                         color=alt.Color('medecin:N', legend=alt.Legend(orient='bottom', columns=5, labelLimit=0))
                     ).properties(height=600)
-                    
-                    st.altair_chart(chart_base.mark_line(point=True) if "Courbes" in t_graph else chart_base.mark_bar(), use_container_width=True)
-                    st.dataframe(tab_final[tab_final["medecin"].isin(choix)].sort_values("CA Global", ascending=False)[["medecin", "CA Global", "CA 365j", "CA 90j", "Tendance"]], use_container_width=True, hide_index=True)
-        except Exception as e: st.error(f"Erreur technique : {e}")
 
+                    # Couche 1 : Données brutes
+                    data_layer = base.mark_bar(opacity=0.6) if "Barres" in t_graph else base.mark_line(point=True)
+                    
+                    # Couche 2 : Droite de tendance linéaire
+                    trend_layer = base.transform_regression(
+                        'x_index', 'ca', groupby=['medecin']
+                    ).mark_line(size=4, strokeDash=[6, 4])
+
+                    # Affichage selon l'option choisie
+                    if visibility == "Données": chart = data_layer
+                    elif visibility == "Tendance Linéaire": chart = trend_layer
+                    else: chart = data_layer + trend_layer
+
+                    st.altair_chart(chart, use_container_width=True)
+                    
+                    # Tableau des résultats
+                    st.subheader("📊 Détails et Tendances (90j / 365j)")
+                    st.dataframe(
+                        tab_final[tab_final["medecin"].isin(choix)]
+                        .sort_values("CA Global", ascending=False)[["medecin", "CA Global", "CA 365j", "CA 90j", "Tendance"]]
+                        .style.format({"CA Global": "{:,.2f} CHF", "CA 365j": "{:,.2f} CHF", "CA 90j": "{:,.2f} CHF"}),
+                        use_container_width=True, hide_index=True
+                    )
+            else:
+                st.warning("Aucune donnée trouvée.")
+        except Exception as e: st.error(f"Erreur technique : {e}")
