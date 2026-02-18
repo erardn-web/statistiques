@@ -202,8 +202,132 @@ elif st.session_state.page == "factures":
         except Exception as e:
             st.error(f"Erreur d'analyse : {e}")
 
+import streamlit as st
+import pandas as pd
+from datetime import datetime
+import altair as alt
+
+# --- CONFIGURATION PAGE WEB ---
+st.set_page_config(page_title="Analyseur de Facturation Pro", layout="wide", page_icon="🏥")
+
+# --- INITIALISATION DE L'ÉTAT ---
+if 'page' not in st.session_state:
+    st.session_state.page = "accueil"
+if 'analyse_lancee' not in st.session_state:
+    st.session_state.analyse_lancee = False
+
+# --- LOGIQUE DE CALCUL (FONCTIONS ORIGINALES) ---
+def convertir_date(val):
+    if pd.isna(val) or str(val).strip() == "": return pd.NaT
+    if isinstance(val, pd.Timestamp): return val
+    try:
+        return pd.to_datetime(str(val).strip(), format="%d.%m.%Y", errors="coerce")
+    except:
+        return pd.NaT
+
+def calculer_liquidites_fournisseur(f_attente, p_hist, jours_horizons):
+    liq = {h: 0.0 for h in jours_horizons}
+    taux_glob = {h: 0.0 for h in jours_horizons}
+    if p_hist.empty: return liq, taux_glob
+    for h in jours_horizons:
+        stats_croisees = p_hist.groupby(["assureur", "fournisseur"])["delai"].apply(lambda x: (x <= h).mean()).to_dict()
+        stats_fourn = p_hist.groupby("fournisseur")["delai"].apply(lambda x: (x <= h).mean()).to_dict()
+        taux_glob[h] = (p_hist["delai"] <= h).mean()
+        total_h = 0.0
+        for _, row in f_attente.iterrows():
+            key = (row["assureur"], row["fournisseur"])
+            prob = stats_croisees.get(key, stats_fourn.get(row["fournisseur"], taux_glob[h]))
+            total_h += row["montant"] * prob
+        liq[h] = total_h
+    return liq, taux_glob
+
 # ==========================================
-# 👨‍⚕️ MODULE MÉDECINS (FUSION + FILTRE TG)
+# 🏠 PAGE D'ACCUEIL
+# ==========================================
+if st.session_state.page == "accueil":
+    st.title("🏥 Assistant d'Analyse de Facturation")
+    st.markdown("---")
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("📊 ANALYSE FACTURATION", use_container_width=True, height=150):
+            st.session_state.page = "factures"
+            st.rerun()
+    with col2:
+        if st.button("🩺 ANALYSE MÉDECINS", use_container_width=True, height=150):
+            st.session_state.page = "medecins"
+            st.rerun()
+
+# ==========================================
+# 📊 MODULE FACTURES (TON CODE INITIAL)
+# ==========================================
+elif st.session_state.page == "factures":
+    if st.sidebar.button("⬅️ Retour Accueil"):
+        st.session_state.page = "accueil"
+        st.rerun()
+
+    st.title("🏥 Analyseur de Facturation Suisse")
+    uploaded_file = st.sidebar.file_uploader("Charger le fichier Excel (.xlsx)", type="xlsx", key="fact_file")
+
+    if uploaded_file:
+        try:
+            df_brut = pd.read_excel(uploaded_file, header=0)
+            st.sidebar.header("🔍 Filtres")
+            fournisseurs = df_brut.iloc[:, 9].dropna().unique().tolist()
+            sel_fournisseurs = st.sidebar.multiselect("Fournisseurs :", options=sorted(fournisseurs), default=fournisseurs)
+            lois = df_brut.iloc[:, 4].dropna().unique().tolist()
+            sel_lois = st.sidebar.multiselect("Types de Loi :", options=sorted(lois), default=lois)
+            
+            st.sidebar.header("📊 Options")
+            show_med = st.sidebar.checkbox("Afficher la Médiane", value=True)
+            show_std = st.sidebar.checkbox("Afficher l'Écart-type", value=True)
+            
+            options_p = {"Global": None, "6 mois": 6, "4 mois": 4, "3 mois": 3, "2 mois": 2, "1 mois": 1}
+            periods_sel = st.sidebar.multiselect("Analyser les périodes :", list(options_p.keys()), default=["Global", "4 mois"])
+            date_cible = st.sidebar.date_input("Date cible (simulation) :", value=datetime.today())
+            
+            col_b1, col_b2 = st.sidebar.columns(2)
+            if col_b1.button("🚀 Analyser", type="primary", use_container_width=True):
+                st.session_state.analyse_lancee = True
+            btn_simuler = col_b2.button("🔮 Simuler", use_container_width=True)
+
+            df = df_brut[(df_brut.iloc[:, 9].isin(sel_fournisseurs)) & (df_brut.iloc[:, 4].isin(sel_lois))].copy()
+            df = df.rename(columns={df.columns[2]: "date_facture", df.columns[4]: "loi", df.columns[8]: "assureur", df.columns[9]: "fournisseur", df.columns[12]: "statut", df.columns[13]: "montant", df.columns[15]: "date_paiement"})
+            df["date_facture"] = df["date_facture"].apply(convertir_date)
+            df["date_paiement"] = df["date_paiement"].apply(convertir_date)
+            df = df[df["date_facture"].notna()].copy()
+            df["montant"] = pd.to_numeric(df["montant"], errors="coerce").fillna(0)
+            df["statut"] = df["statut"].astype(str).str.lower().str.strip()
+            df["assureur"] = df["assureur"].fillna("Patient")
+            ajd = pd.Timestamp(datetime.today().date())
+            f_att = df[df["statut"].str.startswith("en attente") & (df["statut"] != "en attente (annulé)")].copy()
+            st.metric("💰 TOTAL BRUT EN ATTENTE", f"{f_att['montant'].sum():,.2f} CHF")
+
+            if st.session_state.analyse_lancee:
+                tab1, tab2, tab3, tab4 = st.tabs(["💰 Liquidités", "🕒 Délais", "⚠️ Retards", "📈 Évolution"])
+                for p_name in periods_sel:
+                    val = options_p[p_name]
+                    limit_p = ajd - pd.DateOffset(months=val) if val else df["date_facture"].min()
+                    df_p = df[df["date_facture"] >= limit_p]
+                    p_hist = df_p[df_p["date_paiement"].notna()].copy()
+                    p_hist["delai"] = (p_hist["date_paiement"] - p_hist["date_facture"]).dt.days
+                    with tab1:
+                        horizons = [10, 20, 30]
+                        liq, t = calculer_liquidites_fournisseur(f_att, p_hist, horizons)
+                        st.table(pd.DataFrame({"Horizon": [f"Sous {h}j" for h in horizons], "Estimation (CHF)": [f"{round(liq[h]):,}" for h in horizons], "Probabilité": [f"{round(t[h]*100)}%" for h in horizons]}))
+                    with tab2:
+                        if not p_hist.empty:
+                            stats = p_hist.groupby("assureur")["delai"].agg(['mean', 'median', 'std']).reset_index()
+                            st.dataframe(stats, use_container_width=True)
+                    with tab3:
+                        df_att_30 = f_att[(ajd - f_att["date_facture"]).dt.days > 30].copy()
+                        plus_30 = pd.concat([p_hist[p_hist["delai"] > 30], df_att_30])
+                        st.metric(f"Total Retards ({p_name})", f"{len(plus_30)} factures")
+                with tab4:
+                    st.info("Sélectionnez les assureurs dans le module d'origine pour voir l'évolution.")
+        except Exception as e: st.error(f"Erreur : {e}")
+
+# ==========================================
+# 👨‍⚕️ MODULE MÉDECINS (FUSION & FILTRES TG)
 # ==========================================
 elif st.session_state.page == "medecins":
     st.markdown("<style>.block-container { padding-left: 1rem; padding-right: 1rem; max-width: 100%; }</style>", unsafe_allow_html=True)
@@ -212,20 +336,17 @@ elif st.session_state.page == "medecins":
         st.rerun()
 
     st.header("👨‍⚕️ Performance Médecins")
-    
     MOTS_EXCLUSION = {"BERNOIS", "NEUCHATELOIS", "VALAISANS", "GENEVOIS", "VAUDOIS", "FRIBOURGEOIS"}
-
-    uploaded_file = st.sidebar.file_uploader("Charger le fichier Excel (.xlsx)", type="xlsx", key="med_up")
+    uploaded_file = st.sidebar.file_uploader("Fichier Excel (.xlsx)", type="xlsx", key="med_up")
     
     if uploaded_file:
         try:
             df_brut = pd.read_excel(uploaded_file, header=0)
             
             # --- 1. FILTRE TG (Colonne F / Index 5) ---
-            # On ne garde que ce qui n'est PAS "TG"
             df_brut = df_brut[df_brut.iloc[:, 5].astype(str).str.upper() != "TG"].copy()
             
-            # --- 2. MOTEUR DE FUSION AUTOMATIQUE ---
+            # --- 2. FUSION AUTOMATIQUE ---
             def moteur_fusion_securise(df):
                 noms_originaux = df.iloc[:, 7].dropna().unique()
                 mapping = {}
@@ -239,44 +360,33 @@ elif st.session_state.page == "medecins":
                         mots_court = extraire_mots(nom_court)
                         communs = mots_long.intersection(mots_court)
                         differences = mots_long.symmetric_difference(mots_court)
-                        conflit_exclusion = any(m in differences for m in MOTS_EXCLUSION)
-                        if len(communs) >= 2 and not conflit_exclusion:
+                        conflit = any(m in differences for m in MOTS_EXCLUSION)
+                        if len(communs) >= 2 and not conflit:
                             mapping[nom_court] = nom_long
                 return mapping
 
             regroupements = moteur_fusion_securise(df_brut)
             df_brut.iloc[:, 7] = df_brut.iloc[:, 7].replace(regroupements)
             
-            # --- 3. PRÉPARATION DONNÉES & SÉCURITÉ DATES ---
+            # --- 3. PRÉPARATION & SÉCURITÉ DATES ---
             ajd = pd.Timestamp(datetime.today().date())
-            
             df_m = df_brut.copy()
             df_m["medecin"] = df_m.iloc[:, 7]
             df_m["ca"] = pd.to_numeric(df_m.iloc[:, 14], errors="coerce").fillna(0)
             df_m["date_f"] = df_m.iloc[:, 2].apply(convertir_date)
-            
-            # Exclusion : CA > 0, Date valide ET non future
-            df_m = df_m[
-                (df_m["ca"] > 0) & 
-                (df_m["date_f"].notna()) & 
-                (df_m["date_f"] <= ajd) & # Sécurité date future
-                (df_m["medecin"].notna())
-            ].copy()
+            df_m = df_m[(df_m["ca"] > 0) & (df_m["date_f"].notna()) & (df_m["date_f"] <= ajd) & (df_m["medecin"].notna())].copy()
             
             if not df_m.empty:
                 t_90j, t_365j = ajd - pd.DateOffset(days=90), ajd - pd.DateOffset(days=365)
-                
                 stats_ca = df_m.groupby("medecin")["ca"].sum().reset_index(name="CA Global")
                 ca_90 = df_m[df_m["date_f"] >= t_90j].groupby("medecin")["ca"].sum().reset_index(name="CA 90j")
                 ca_365 = df_m[df_m["date_f"] >= t_365j].groupby("medecin")["ca"].sum().reset_index(name="CA 365j")
-                
                 tab_final = stats_ca.merge(ca_90, on="medecin", how="left").merge(ca_365, on="medecin", how="left").fillna(0)
                 
                 def calc_t(row):
                     if row["CA 365j"] <= 0: return "⚪ Inconnu"
                     ratio = (row["CA 90j"] / row["CA 365j"]) * 100
                     return f"↘️ Baisse ({ratio:.1f}%)" if ratio <= 23 else (f"↗️ Hausse ({ratio:.1f}%)" if ratio >= 27 else f"➡️ Stable ({ratio:.1f}%)")
-                
                 tab_final["Tendance"] = tab_final.apply(calc_t, axis=1)
 
                 # --- 4. VISUALISATION ---
@@ -284,11 +394,11 @@ elif st.session_state.page == "medecins":
                 c1, c2, c3 = st.columns([1, 1, 1.5]) 
                 with c1: m_top = st.selectbox("Top :", [5, 10, 25, 50, "Tout"], index=1)
                 with c2: t_graph = st.radio("Style :", ["📊 Barres", "📈 Courbes"], horizontal=True)
-                with c3: visibility = st.radio("Tendance Linéaire :", ["Données", "Tendance seule", "Les deux"], index=0, horizontal=True)
+                with c3: visibility = st.radio("Option Tendance :", ["Données", "Tendance seule", "Les deux"], index=0, horizontal=True)
 
                 tab_s = tab_final.sort_values("CA Global", ascending=False)
                 def_sel = tab_s["medecin"].tolist() if m_top == "Tout" else tab_s.head(int(m_top))["medecin"].tolist()
-                choix = st.multiselect("Sélection des médecins :", options=sorted(tab_final["medecin"].unique()), default=def_sel)
+                choix = st.multiselect("Sélection :", options=sorted(tab_final["medecin"].unique()), default=def_sel)
 
                 if choix:
                     df_p = df_m[df_m["medecin"].isin(choix)].copy()
@@ -297,22 +407,17 @@ elif st.session_state.page == "medecins":
 
                     base = alt.Chart(df_p).encode(
                         x=alt.X('M_Date:T', title="Mois", axis=alt.Axis(format='%m.%Y')),
-                        y=alt.Y('ca:Q', title="CA encaissé (CHF)"),
+                        y=alt.Y('ca:Q', title="CA (CHF)"),
                         color=alt.Color('medecin:N', legend=alt.Legend(orient='bottom', columns=2, labelLimit=0))
                     ).properties(height=600)
 
                     data_layer = base.mark_bar(opacity=0.6) if "Barres" in t_graph else base.mark_line(point=True)
-                    trend_layer = base.transform_regression('M_Date', 'ca', groupby=['medecin']).mark_line(size=4, strokeDash=)
+                    trend_layer = base.transform_regression('M_Date', 'ca', groupby=['medecin']).mark_line(size=4, strokeDash=[6, 4])
 
                     if visibility == "Données": chart = data_layer
                     elif visibility == "Tendance seule": chart = trend_layer
                     else: chart = data_layer + trend_layer
 
                     st.altair_chart(chart, use_container_width=True)
-                    
-                    if regroupements:
-                        with st.expander(f"🔗 {len(regroupements)} fusions effectuées (TG exclu)"):
-                            st.write(regroupements)
-
                     st.dataframe(tab_final[tab_final["medecin"].isin(choix)].sort_values("CA Global", ascending=False)[["medecin", "CA Global", "CA 365j", "CA 90j", "Tendance"]], use_container_width=True, hide_index=True)
         except Exception as e: st.error(f"Erreur technique : {e}")
