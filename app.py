@@ -60,7 +60,7 @@ if st.session_state.page == "accueil":
             st.session_state.page = "medecins"
             st.rerun()
 
-     with col2:
+     with col3:
         st.success("ANALYSE TARIFS**")
         st.write("Analyse du CA par tarif")
         if st.button("Accéder à l'Analyse tarifs", use_container_width=True):
@@ -302,5 +302,6 @@ elif st.session_state.page == "medecins":
                     st.altair_chart(chart, use_container_width=True)
                     st.dataframe(tab_final[tab_final["medecin"].isin(choix)].sort_values("CA Global", ascending=False)[["medecin", "CA Global", "CA 365j", "CA 90j", "Tendance"]], use_container_width=True, hide_index=True)
         except Exception as e: st.error(f"Erreur technique : {e}")
+
 
 
