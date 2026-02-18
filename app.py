@@ -203,7 +203,7 @@ elif st.session_state.page == "factures":
             st.error(f"Erreur d'analyse : {e}")
 
 # ==========================================
-# 👨‍⚕️ MODULE MÉDECINS (FUSION RENFORCÉE)
+# 👨‍⚕️ MODULE MÉDECINS (FUSION RENFORCÉE & FIX SYNTAXE)
 # ==========================================
 elif st.session_state.page == "medecins":
     st.markdown("<style>.block-container { padding-left: 1rem; padding-right: 1rem; max-width: 100%; }</style>", unsafe_allow_html=True)
@@ -222,19 +222,17 @@ elif st.session_state.page == "medecins":
             def moteur_fusion_robuste(df):
                 noms_originaux = df.iloc[:, 7].dropna().unique()
                 mapping = {}
-                # On nettoie et on transforme en ensembles de mots
                 def extraire_mots(texte):
-                    # Supprime ponctuation et mots de moins de 3 lettres (ex: "de", "le")
+                    # Supprime ponctuation et ignore les mots de moins de 3 lettres
                     mots = "".join(c if c.isalnum() else " " for c in str(texte)).upper().split()
                     return {m for m in mots if len(m) > 2}
 
                 noms_tries = sorted(noms_originaux, key=len, reverse=True)
-                
                 for i, nom_long in enumerate(noms_tries):
                     mots_long = extraire_mots(nom_long)
                     for nom_court in noms_tries[i+1:]:
                         mots_court = extraire_mots(nom_court)
-                        # INTERSECTION : Si ils partagent au moins 2 mots (ex: LOZANO et JUAN)
+                        # Fusion si au moins 2 mots significatifs en commun (ex: LOZANO + JUAN)
                         if len(mots_long.intersection(mots_court)) >= 2:
                             mapping[nom_court] = nom_long
                 return mapping
@@ -242,7 +240,6 @@ elif st.session_state.page == "medecins":
             regroupements = moteur_fusion_robuste(df_brut)
             df_brut.iloc[:, 7] = df_brut.iloc[:, 7].replace(regroupements)
             
-            # --- LE RESTE DU CALCUL RESTE IDENTIQUE MAIS CONSOLIDÉ ---
             fourn_med = sorted(df_brut.iloc[:, 9].dropna().unique().tolist())
             sel_fourn_med = st.sidebar.multiselect("Filtrer par Fournisseur :", fourn_med, default=fourn_med)
             
@@ -256,15 +253,14 @@ elif st.session_state.page == "medecins":
                 ajd = pd.Timestamp(datetime.today())
                 t_90j, t_365j = ajd - pd.DateOffset(days=90), ajd - pd.DateOffset(days=365)
                 
-                # Consolidation totale
                 stats_ca = df_m.groupby("medecin")["ca"].sum().reset_index(name="CA Global")
                 ca_90 = df_m[df_m["date_f"] >= t_90j].groupby("medecin")["ca"].sum().reset_index(name="CA 90j")
                 ca_365 = df_m[df_m["date_f"] >= t_365j].groupby("medecin")["ca"].sum().reset_index(name="CA 365j")
                 
                 tab_final = stats_ca.merge(ca_90, on="medecin", how="left").merge(ca_365, on="medecin", how="left").fillna(0)
-                tab_final["Tendance"] = tab_final.apply(lambda r: f"↘️ Baisse ({(r['CA 90j']/r['CA 365j']*100):.1f}%)" if (r['CA 365j']>0 and r['CA 90j']/r['CA 365j']*100 <= 23) else "↗️ Hausse" if (r['CA 365j']>0 and r['CA 90j']/r['CA 365j']*100 >= 27) else "➡️ Stable", axis=1)
+                tab_final["Tendance"] = tab_final.apply(lambda r: f"↘️ Baisse ({(r['CA 90j']/r['CA 365j']*100):.1f}%)" if (r['CA 365j']>0 and r['CA 90j']/r['CA 365j']*100 <= 23) else f"↗️ Hausse ({(r['CA 90j']/r['CA 365j']*100):.1f}%)" if (r['CA 365j']>0 and r['CA 90j']/r['CA 365j']*100 >= 27) else "➡️ Stable", axis=1)
 
-                # Visualisation
+                st.markdown("### 🏆 Sélection et Visualisation")
                 c1, c2, c3 = st.columns([1, 1, 1.5]) 
                 with c1: m_top = st.selectbox("Top :", [5, 10, 25, 50, "Tout"], index=1)
                 with c2: t_graph = st.radio("Style :", ["📊 Barres", "📈 Courbes"], horizontal=True)
@@ -286,9 +282,14 @@ elif st.session_state.page == "medecins":
                     ).properties(height=600)
 
                     data_layer = base.mark_bar(opacity=0.6) if "Barres" in t_graph else base.mark_line(point=True)
-                    trend_layer = base.transform_regression('Mois_Date', 'ca', groupby=['medecin']).mark_line(size=4, strokeDash=)
+                    # strokeDash= CORRIGÉ avec [6, 4]
+                    trend_layer = base.transform_regression('Mois_Date', 'ca', groupby=['medecin']).mark_line(size=4, strokeDash=[6, 4])
 
-                    st.altair_chart(data_layer + trend_layer if visibility == "Les deux" else (trend_layer if visibility == "Tendance Linéaire" else data_layer), use_container_width=True)
+                    if visibility == "Données": chart = data_layer
+                    elif visibility == "Tendance Linéaire": chart = trend_layer
+                    else: chart = data_layer + trend_layer
+
+                    st.altair_chart(chart, use_container_width=True)
                     
                     if regroupements:
                         with st.expander(f"🔗 {len(regroupements)} fusions automatiques effectuées"):
