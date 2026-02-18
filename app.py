@@ -207,7 +207,6 @@ elif st.session_state.page == "factures":
 # ==========================================
 elif st.session_state.page == "medecins":
     st.markdown("<style>.block-container { padding-left: 1rem; padding-right: 1rem; max-width: 100%; }</style>", unsafe_allow_html=True)
-    
     if st.sidebar.button("⬅️ Retour Accueil"):
         st.session_state.page = "accueil"
         st.rerun()
@@ -255,7 +254,6 @@ elif st.session_state.page == "medecins":
                 if choix:
                     df_p = df_m[df_m["medecin"].isin(choix)].copy()
                     df_p = df_p.sort_values("date_f")
-                    # On garde un format date pour le calcul mathématique de la tendance
                     df_p["Mois_Date"] = df_p["date_f"].dt.to_period("M").dt.to_timestamp()
                     df_p = df_p.groupby(["Mois_Date", "medecin"])["ca"].sum().reset_index()
 
@@ -266,17 +264,13 @@ elif st.session_state.page == "medecins":
                         color=alt.Color('medecin:N', legend=alt.Legend(orient='bottom', columns=5))
                     ).properties(height=600)
 
-                    # Couche 1 : Données (Barres ou Lignes)
-                    if "Barres" in t_graph:
-                        data_layer = base.mark_bar(opacity=0.6)
-                    else:
-                        data_layer = base.mark_line(point=True)
+                    # Données (Barres ou Lignes)
+                    data_layer = base.mark_bar(opacity=0.6) if "Barres" in t_graph else base.mark_line(point=True)
 
-                    # Couche 2 : Tendance Linéaire (Régression sur le temps)
-                    # strokeDash= définit les pointillés
+                    # Tendance Linéaire (strokeDash=[6,4] pour les pointillés)
                     trend_layer = base.transform_regression(
                         'Mois_Date', 'ca', groupby=['medecin']
-                    ).mark_line(size=4, strokeDash=)
+                    ).mark_line(size=4, strokeDash=[6,4])
 
                     # Affichage final
                     if visibility == "Données": chart = data_layer
