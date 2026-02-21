@@ -317,14 +317,18 @@ elif st.session_state.page == "tarifs":
             df[nom_col_date] = pd.to_datetime(df[nom_col_date], errors='coerce')
             df = df[df[nom_col_somme] > 0].dropna(subset=[nom_col_date, nom_col_somme])
             
-            # --- OPTION PÉRIODE ---
+            # --- GESTION DE LA PRÉCISION TEMPORELLE ---
             st.sidebar.header("📅 Période")
             exclure_actuel = st.sidebar.toggle("Exclure le mois en cours", value=True)
-            ajd = pd.Timestamp(datetime.today().date())
+            maintenant = pd.Timestamp(datetime.today().date())
             
             if exclure_actuel:
-                premier_du_mois = ajd.replace(day=1)
-                df = df[df[nom_col_date] < premier_du_mois]
+                # La date de référence devient le dernier jour du mois précédent
+                reference_date = maintenant.replace(day=1) - pd.Timedelta(days=1)
+                df = df[df[nom_col_date] <= reference_date]
+            else:
+                # La date de référence est aujourd'hui
+                reference_date = maintenant
 
             df['Profession'] = df[nom_col_code].apply(assigner_profession)
 
@@ -359,20 +363,18 @@ elif st.session_state.page == "tarifs":
                 fig.update_xaxes(dtick="M1", tickformat="%b %Y")
                 st.plotly_chart(fig, use_container_width=True)
 
-                # 2. TABLEAU DES TENDANCES (Logique Médecins appliquée aux Tarifs)
-                st.markdown("### 📈 Analyse de Performance par Code Tarifaire")
+                # 2. TABLEAU DES TENDANCES AVEC RÉFÉRENCE AJUSTÉE
+                st.markdown(f"### 📈 Performance par Tarif (Base : {reference_date.strftime('%d.%m.%Y')})")
                 
-                t_90j, t_365j = ajd - pd.DateOffset(days=90), ajd - pd.DateOffset(days=365)
+                t_90j = reference_date - pd.DateOffset(days=90)
+                t_365j = reference_date - pd.DateOffset(days=365)
                 
-                # Calculs des agrégats
                 stats_global = df_filtered.groupby(nom_col_code)[nom_col_somme].sum().reset_index(name="CA Global")
                 ca_90 = df_filtered[df_filtered[nom_col_date] >= t_90j].groupby(nom_col_code)[nom_col_somme].sum().reset_index(name="CA 90j")
                 ca_365 = df_filtered[df_filtered[nom_col_date] >= t_365j].groupby(nom_col_code)[nom_col_somme].sum().reset_index(name="CA 365j")
                 
-                # Fusion des données
                 tab_perf = stats_global.merge(ca_365, on=nom_col_code, how="left").merge(ca_90, on=nom_col_code, how="left").fillna(0)
                 
-                # Calcul de la Tendance
                 def calculer_tendance_tarif(r):
                     if r['CA 365j'] > 0:
                         ratio = (r['CA 90j'] / r['CA 365j']) * 100
@@ -383,7 +385,6 @@ elif st.session_state.page == "tarifs":
 
                 tab_perf["Tendance"] = tab_perf.apply(calculer_tendance_tarif, axis=1)
                 
-                # Affichage final
                 st.dataframe(
                     tab_perf.sort_values("CA Global", ascending=False),
                     use_container_width=True,
@@ -448,5 +449,6 @@ elif st.session_state.page == "bilan":
             st.dataframe(df_imp[[df_f.columns[2], df_f.columns[8], col_m]].sort_values(df_f.columns[2]), use_container_width=True)
             
         except Exception as e: st.error(f"Erreur : {e}")
+
 
 
