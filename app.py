@@ -71,7 +71,7 @@ if st.session_state.page == "accueil":
             st.rerun()
             
     with col2:
-        st.success("🩺 **MODULE MÉDECIN - export des facturesS**")
+        st.success("🩺 **MODULE MÉDECIN - export des factures**")
         if st.button("Accéder aux Médecins", use_container_width=True):
             st.session_state.page = "medecins"
             st.rerun()
@@ -506,4 +506,5 @@ elif st.session_state.page == "bilan":
 
         except Exception as e:
             st.error(f"Erreur d'analyse : {e}")
+
 
