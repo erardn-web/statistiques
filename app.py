@@ -59,31 +59,31 @@ if 'analyse_lancee' not in st.session_state:
 # 🏠 PAGE D'ACCUEIL
 # ==========================================
 if st.session_state.page == "accueil":
-    st.title("🏥 Assistant d'Analyse de Santé")
+    st.title("🏥 Assistant d'Analyse de Ephysio")
     st.markdown("---")
     st.write("### Choisissez le module d'analyse souhaité :")
     
     col1, col2, col3, col4 = st.columns(4)
     with col1:
-        st.info("📊 **MODULE FACTURATION**")
+        st.info("📊 **MODULE FACTURATION - export des factures**")
         if st.button("Accéder à la Facturation", use_container_width=True):
             st.session_state.page = "factures"
             st.rerun()
             
     with col2:
-        st.success("🩺 **MODULE MÉDECINS**")
+        st.success("🩺 **MODULE MÉDECIN - export des facturesS**")
         if st.button("Accéder aux Médecins", use_container_width=True):
             st.session_state.page = "medecins"
             st.rerun()
 
     with col3:
-        st.warning("🏷️ **MODULE TARIFS**")
+        st.warning("🏷️ **MODULE TARIFS - export des prestations**")
         if st.button("Accéder aux Tarifs", use_container_width=True):
             st.session_state.page = "tarifs"
             st.rerun()
 
     with col4:
-        st.info("🏦 **BILAN COMPTABLE**")
+        st.info("🏦 **BILAN COMPTABLE - export des prestations d'une seule année**")
         if st.button("Accéder au Bilan", use_container_width=True, type="primary"):
             st.session_state.page = "bilan"
             st.rerun()
@@ -506,3 +506,4 @@ elif st.session_state.page == "bilan":
 
         except Exception as e:
             st.error(f"Erreur d'analyse : {e}")
+
