@@ -89,7 +89,7 @@ if st.session_state.page == "accueil":
             st.rerun()
 
 # ==========================================
-# 📊 MODULE FACTURES (ORIGINAL)
+# 📊 MODULE FACTURES
 # ==========================================
 elif st.session_state.page == "factures":
     if st.sidebar.button("⬅️ Retour Accueil"):
@@ -215,7 +215,7 @@ elif st.session_state.page == "factures":
         except Exception as e: st.error(f"Erreur d'analyse : {e}")
 
 # ==========================================
-# 🩺 MODULE MÉDECINS (ORIGINAL)
+# 🩺 MODULE MÉDECINS
 # ==========================================
 elif st.session_state.page == "medecins":
     st.markdown("<style>.block-container { padding-left: 1rem; padding-right: 1rem; max-width: 100%; }</style>", unsafe_allow_html=True)
@@ -258,61 +258,4 @@ elif st.session_state.page == "medecins":
             df_m_init["medecin"] = df_m_init.iloc[:, 7]
             df_m_init["ca"] = pd.to_numeric(df_m_init.iloc[:, 14], errors="coerce").fillna(0)
             df_m_init["date_f"] = df_m_init.iloc[:, 2].apply(convertir_date)
-            df_m = df_m_init[(df_m_init["ca"] > 0) & (df_m_init["date_f"].notna()) & (df_m_init["date_f"] <= ajd) & (df_m_init["medecin"].notna())].copy()
-            
-            if not df_m.empty:
-                t_90j, t_365j = ajd - pd.DateOffset(days=90), ajd - pd.DateOffset(days=365)
-                stats_ca = df_m.groupby("medecin")["ca"].sum().reset_index(name="CA Global")
-                ca_90 = df_m[df_m["date_f"] >= t_90j].groupby("medecin")["ca"].sum().reset_index(name="CA 90j")
-                ca_365 = df_m[df_m["date_f"] >= t_365j].groupby("medecin")["ca"].sum().reset_index(name="CA 365j")
-                tab_final = stats_ca.merge(ca_90, on="medecin", how="left").merge(ca_365, on="medecin", how="left").fillna(0)
-                tab_final["Tendance"] = tab_final.apply(lambda r: f"↘️ Baisse ({(r['CA 90j']/r['CA 365j']*100):.1f}%)" if (r['CA 365j']>0 and r['CA 90j']/r['CA 365j']*100 <= 23) else f"↗️ Hausse ({(r['CA 90j']/r['CA 365j']*100):.1f}%)" if (r['CA 365j']>0 and r['CA 90j']/r['CA 365j']*100 >= 27) else "➡️ Stable", axis=1)
-
-                st.markdown("### 🏆 Sélection et Visualisation")
-                c1, c2, c3 = st.columns([1, 1, 1.5]) 
-                with c1: m_top = st.selectbox("Top :", [5, 10, 25, 50, "Tout"], index=1)
-                with c2: t_graph = st.radio("Style :", ["📊 Barres", "📈 Courbes"], horizontal=True)
-                with c3: visibility = st.radio("Option Tendance :", ["Données", "Ligne", "Les deux"], index=0, horizontal=True)
-
-                tab_s = tab_final.sort_values("CA Global", ascending=False)
-                def_sel = tab_s["medecin"].tolist() if m_top == "Tout" else tab_s.head(int(m_top))["medecin"].tolist()
-                choix = st.multiselect("Sélection :", options=sorted(tab_final["medecin"].unique()), default=def_sel)
-
-                if choix:
-                    df_p = df_m[df_m["medecin"].isin(choix)].copy()
-                    df_p["M_Date"] = df_p["date_f"].dt.to_period("M").dt.to_timestamp()
-                    df_p = df_p.groupby(["M_Date", "medecin"])["ca"].sum().reset_index()
-                    base = alt.Chart(df_p).encode(
-                        x=alt.X('M_Date:T', title="Mois", axis=alt.Axis(format='%m.%Y')),
-                        y=alt.Y('ca:Q', title="CA (CHF)"),
-                        color=alt.Color('medecin:N', legend=alt.Legend(orient='bottom', columns=2, labelLimit=0))
-                    ).properties(height=600)
-                    data_layer = base.mark_bar(opacity=0.6) if "Barres" in t_graph else base.mark_line(point=True)
-                    trend_layer = base.transform_regression('M_Date', 'ca', groupby=['medecin']).mark_line(size=4, strokeDash=[6, 4])
-                    chart = data_layer if visibility == "Données" else trend_layer if visibility == "Ligne" else data_layer + trend_layer
-                    st.altair_chart(chart, use_container_width=True)
-                    st.dataframe(tab_final[tab_final["medecin"].isin(choix)].sort_values("CA Global", ascending=False)[["medecin", "CA Global", "CA 365j", "CA 90j", "Tendance"]], use_container_width=True, hide_index=True)
-        except Exception as e: st.error(f"Erreur technique : {e}")
-
-# ==========================================
-# 🏷️ MODULE TARIFS (MISE À JOUR DEMANDÉE)
-# ==========================================
-elif st.session_state.page == "tarifs":
-    if st.sidebar.button("⬅️ Retour Accueil"):
-        st.session_state.page = "accueil"
-        st.rerun()
-
-    st.title("📊 Analyse des revenus mensuels")
-    uploaded_file = st.sidebar.file_uploader("📂 Déposer l'export Excel (onglet 'Prestation')", type="xlsx", key="tarif_up")
-
-    if uploaded_file:
-        try:
-            df = pd.read_excel(uploaded_file, sheet_name='Prestation')
-            nom_col_code = df.columns[2]   # C
-            nom_col_somme = df.columns[11] # L
-            date_cols = [c for c in df.columns if 'Date' in str(c)]
-            nom_col_date = date_cols[0] if date_cols else df.columns[0]
-
-            df[nom_col_somme] = pd.to_numeric(df[nom_col_somme], errors='coerce')
-            df[nom_col_date] = pd.to_datetime(df[nom_col_date], errors='coerce')
-            df = df[df[nom_col_somme] > 0].dropna(subset=[nom_col_date, nom_col_somme])
+            df_m = df_m_init[(df_m_init["ca"] > 0) & (df_m_init
