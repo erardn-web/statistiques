@@ -407,7 +407,7 @@ elif st.session_state.page == "tarifs":
                 
         except Exception as e: st.error(f"Erreur Tarifs : {e}")
 # ==========================================
-# 🏦 MODULE BILAN COMPTABLE (V9 - CA FOURNISSEURS & IMPAYÉS)
+# 🏦 MODULE BILAN COMPTABLE (V10 - AVEC LIGNE TOTAL)
 # ==========================================
 elif st.session_state.page == "bilan":
     if st.sidebar.button("⬅️ Retour Accueil"):
@@ -432,14 +432,12 @@ elif st.session_state.page == "bilan":
             col_date_f = df_f.columns[2]   # C: Date de la facture
             col_fourn_f = df_f.columns[9]  # J: Fournisseur
             col_ca_f = df_f.columns[14]    # O: Montant (CA)
-            col_paye_f = df_f.columns[15]  # P: Date de paiement (pour impayés)
+            col_paye_f = df_f.columns[15]  # P: Date de paiement
             
-            # Nettoyage
             df_f[col_date_f] = pd.to_datetime(df_f[col_date_f], errors='coerce')
             df_f[col_ca_f] = pd.to_numeric(df_f[col_ca_f], errors='coerce').fillna(0)
             df_f = df_f.dropna(subset=[col_date_f])
 
-            # Choix de l'année
             annees = sorted(df_f[col_date_f].dt.year.unique().astype(int), reverse=True)
             annee = st.sidebar.selectbox("Année d'analyse :", annees)
             df_sel = df_f[df_f[col_date_f].dt.year == annee].copy()
@@ -450,11 +448,20 @@ elif st.session_state.page == "bilan":
 
             if vue_ca == "Annuel (Cumulé)":
                 ca_fourn = df_sel.groupby(col_fourn_f)[col_ca_f].sum().sort_values(ascending=False).reset_index()
+                
+                # Ajout de la ligne Total pour le cumul annuel
+                total_val = ca_fourn[col_ca_f].sum()
+                ligne_total = pd.DataFrame({col_fourn_f: ['TOTAL GÉNÉRAL'], col_ca_f: [total_val]})
+                ca_fourn = pd.concat([ca_fourn, ligne_total], ignore_index=True)
+                
                 st.dataframe(
                     ca_fourn, 
                     use_container_width=True, 
                     hide_index=True,
-                    column_config={col_fourn_f: "Fournisseur", col_ca_f: st.column_config.NumberColumn("Total CA", format="%.2f CHF")}
+                    column_config={
+                        col_fourn_f: "Fournisseur", 
+                        col_ca_f: st.column_config.NumberColumn("Total CA", format="%.2f CHF")
+                    }
                 )
             else:
                 df_sel['Mois_Num'] = df_sel[col_date_f].dt.month
@@ -465,21 +472,28 @@ elif st.session_state.page == "bilan":
                 pivot_fourn.columns = nom_mois
                 pivot_fourn['TOTAL'] = pivot_fourn.sum(axis=1)
                 
-                st.dataframe(pivot_fourn.style.format("{:.2f}"), use_container_width=True)
+                # Ajout de la ligne de Totalisation en bas du tableau mensuel
+                pivot_total = pivot_fourn.sum(axis=0).to_frame().T
+                pivot_total.index = ["TOTAL GÉNÉRAL"]
+                pivot_final = pd.concat([pivot_fourn, pivot_total])
+                
+                st.dataframe(pivot_final.style.format("{:.2f}").highlight_max(axis=0, color="#d4f1f9"), use_container_width=True)
 
             # --- SECTION IMPAYÉS AU 31.12 ---
             st.markdown("---")
             st.subheader(f"⏳ Factures Impayées au 31.12.{annee}")
             
-            # Un impayé est une facture de l'année sélectionnée où la date de paiement (P) est vide
             df_impayes = df_sel[df_sel[col_paye_f].isna()].copy()
             total_impayes = df_impayes[col_ca_f].sum()
 
             if total_impayes > 0:
                 st.warning(f"Montant total restant à percevoir pour {annee} : **{total_impayes:,.2f} CHF**")
-                
-                # Détail des impayés par fournisseur
                 imp_par_fourn = df_impayes.groupby(col_fourn_f)[col_ca_f].sum().sort_values(ascending=False).reset_index()
+                
+                # Ajout de la ligne Total aussi pour les impayés
+                ligne_total_imp = pd.DataFrame({col_fourn_f: ['TOTAL DES IMPAYÉS'], col_ca_f: [total_impayes]})
+                imp_par_fourn = pd.concat([imp_par_fourn, ligne_total_imp], ignore_index=True)
+                
                 with st.expander("Voir le détail des impayés par fournisseur"):
                     st.dataframe(
                         imp_par_fourn, 
