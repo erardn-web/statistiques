@@ -295,7 +295,7 @@ elif st.session_state.page == "medecins":
         except Exception as e: st.error(f"Erreur technique : {e}")
 
 # ==========================================
-# 🏷️ MODULE TARIFS (LOGIQUE MISE À JOUR)
+# 🏷️ MODULE TARIFS (LOGIQUE MISE À JOUR + EXCLUSION MOIS EN COURS)
 # ==========================================
 elif st.session_state.page == "tarifs":
     if st.sidebar.button("⬅️ Retour Accueil"):
@@ -316,9 +316,18 @@ elif st.session_state.page == "tarifs":
             df[nom_col_somme] = pd.to_numeric(df[nom_col_somme], errors='coerce')
             df[nom_col_date] = pd.to_datetime(df[nom_col_date], errors='coerce')
             df = df[df[nom_col_somme] > 0].dropna(subset=[nom_col_date, nom_col_somme])
+            
+            # --- OPTION EXCLURE LE MOIS EN COURS ---
+            st.sidebar.header("📅 Période")
+            exclure_actuel = st.sidebar.toggle("Exclure le mois en cours", value=True)
+            
+            if exclure_actuel:
+                premier_du_mois = datetime.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+                df = df[df[nom_col_date] < premier_du_mois]
+
             df['Profession'] = df[nom_col_code].apply(assigner_profession)
 
-            # --- NOUVELLE LOGIQUE DE FILTRAGE ---
+            # --- FILTRAGE PAR MÉTIERS ET CODES ---
             st.sidebar.header("⚙️ Filtres")
             professions_dispo = sorted(df['Profession'].unique())
             metiers_actifs = []
@@ -326,7 +335,6 @@ elif st.session_state.page == "tarifs":
                 if st.sidebar.checkbox(p, value=True, key=f"check_{p}"):
                     metiers_actifs.append(p)
 
-            # Liste dynamique des codes en fonction des métiers cochés
             codes_possibles = df[df['Profession'].isin(metiers_actifs)]
             liste_codes = sorted(codes_possibles[nom_col_code].unique().astype(str))
             selection_codes = st.sidebar.multiselect("Codes à afficher :", options=liste_codes, default=liste_codes)
@@ -334,7 +342,6 @@ elif st.session_state.page == "tarifs":
             view_mode = st.radio("Affichage :", ["Profession", "Code tarifaire"], horizontal=True)
             chart_type = st.radio("Style :", ["Barres", "Courbes"], horizontal=True)
 
-            # Filtrage final du DataFrame
             df_filtered = df[df[nom_col_code].astype(str).isin(selection_codes)].copy()
 
             if not df_filtered.empty:
@@ -342,7 +349,6 @@ elif st.session_state.page == "tarifs":
                 target_col = "Profession" if view_mode == "Profession" else nom_col_code
                 df_plot = df_filtered.groupby(['Mois', target_col])[nom_col_somme].sum().reset_index()
                 
-                # Assignation des couleurs si métier
                 color_map = COULEURS_PROF if view_mode == "Profession" else None
                 
                 if chart_type == "Barres":
@@ -357,10 +363,9 @@ elif st.session_state.page == "tarifs":
                 with st.expander("📄 Détails des données"):
                     st.dataframe(df_plot.sort_values(['Mois', nom_col_somme], ascending=[False, False]), use_container_width=True)
             else:
-                st.warning("Aucune donnée pour cette sélection.")
+                st.warning("Aucune donnée disponible après filtrage.")
                 
         except Exception as e: st.error(f"Erreur Tarifs : {e}")
-
 # ==========================================
 # 🏦 MODULE BILAN COMPTABLE (VERSION FINALE)
 # ==========================================
@@ -410,3 +415,4 @@ elif st.session_state.page == "bilan":
             st.dataframe(df_imp[[df_f.columns[2], df_f.columns[8], col_m]].sort_values(df_f.columns[2]), use_container_width=True)
             
         except Exception as e: st.error(f"Erreur : {e}")
+
