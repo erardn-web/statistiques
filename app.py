@@ -66,28 +66,24 @@ if st.session_state.page == "accueil":
     col1, col2, col3, col4 = st.columns(4)
     with col1:
         st.info("📊 **MODULE FACTURATION**")
-        st.write("Analyse des liquidités et délais.")
         if st.button("Accéder à la Facturation", use_container_width=True):
             st.session_state.page = "factures"
             st.rerun()
             
     with col2:
         st.success("🩺 **MODULE MÉDECINS**")
-        st.write("Analyse du CA et tendances.")
         if st.button("Accéder aux Médecins", use_container_width=True):
             st.session_state.page = "medecins"
             st.rerun()
 
     with col3:
         st.warning("🏷️ **MODULE TARIFS**")
-        st.write("Revenus mensuels par métier.")
         if st.button("Accéder aux Tarifs", use_container_width=True):
             st.session_state.page = "tarifs"
             st.rerun()
 
     with col4:
         st.info("🏦 **BILAN COMPTABLE**")
-        st.write("Clôture CA et Impayés au 31.12.")
         if st.button("Accéder au Bilan", use_container_width=True, type="primary"):
             st.session_state.page = "bilan"
             st.rerun()
@@ -299,104 +295,24 @@ elif st.session_state.page == "medecins":
         except Exception as e: st.error(f"Erreur technique : {e}")
 
 # ==========================================
-# 🏷️ MODULE TARIFS (ORIGINAL)
+# 🏷️ MODULE TARIFS (MISE À JOUR DEMANDÉE)
 # ==========================================
 elif st.session_state.page == "tarifs":
     if st.sidebar.button("⬅️ Retour Accueil"):
         st.session_state.page = "accueil"
         st.rerun()
 
-    st.title("🏷️ Analyse par Métier et Prestations")
-    uploaded_file = st.sidebar.file_uploader("Fichier Excel (Onglet 'Prestation')", type="xlsx", key="tarif_up")
+    st.title("📊 Analyse des revenus mensuels")
+    uploaded_file = st.sidebar.file_uploader("📂 Déposer l'export Excel (onglet 'Prestation')", type="xlsx", key="tarif_up")
 
     if uploaded_file:
         try:
             df = pd.read_excel(uploaded_file, sheet_name='Prestation')
-            nom_col_code = df.columns[2]   # Colonne C
-            nom_col_somme = df.columns[11] # Colonne L
+            nom_col_code = df.columns[2]   # C
+            nom_col_somme = df.columns[11] # L
             date_cols = [c for c in df.columns if 'Date' in str(c)]
             nom_col_date = date_cols[0] if date_cols else df.columns[0]
 
             df[nom_col_somme] = pd.to_numeric(df[nom_col_somme], errors='coerce')
             df[nom_col_date] = pd.to_datetime(df[nom_col_date], errors='coerce')
             df = df[df[nom_col_somme] > 0].dropna(subset=[nom_col_date, nom_col_somme])
-            df['Profession'] = df[nom_col_code].apply(assigner_profession)
-
-            st.sidebar.header("⚙️ Paramètres")
-            inclure_mois = st.sidebar.toggle("Inclure le mois en cours", value=True)
-            if not inclure_mois:
-                df = df[df[nom_col_date] < datetime.now().replace(day=1, hour=0, minute=0)]
-
-            profs = sorted(df['Profession'].unique())
-            sel_profs = [p for p in profs if st.sidebar.checkbox(p, value=True, key=f"check_{p}")]
-            
-            df_filtered = df[df['Profession'].isin(sel_profs)].copy()
-            df_filtered['Mois'] = df_filtered[nom_col_date].dt.to_period('M').dt.to_timestamp()
-            df_plot = df_filtered.groupby(['Mois', 'Profession'])[nom_col_somme].sum().reset_index()
-
-            fig = px.bar(df_plot, x='Mois', y=nom_col_somme, color='Profession', 
-                         color_discrete_map=COULEURS_PROF, barmode='group', text_auto='.2f')
-            
-            st.plotly_chart(fig, use_container_width=True)
-            st.dataframe(df_plot.sort_values('Mois', ascending=False), use_container_width=True)
-            
-        except Exception as e: st.error(f"Erreur Tarifs : {e}")
-
-# ==========================================
-# 🏦 MODULE BILAN COMPTABLE (L'AJOUT)
-# ==========================================
-elif st.session_state.page == "bilan":
-    if st.sidebar.button("⬅️ Retour Accueil"):
-        st.session_state.page = "accueil"
-        st.rerun()
-
-    st.title("🏦 Bilan Comptable au 31 Décembre")
-    st.write("Ce module calcule le CA annuel (onglet Prestation) et les impayés (onglet Factures).")
-    
-    up = st.sidebar.file_uploader("Fichier Excel (Onglets Prestation + Factures)", type="xlsx", key="bilan_up")
-    
-    if up:
-        try:
-            xl = pd.ExcelFile(up)
-            # Détection souple de l'onglet Factures (singulier ou pluriel)
-            ong_f = next((s for s in xl.sheet_names if 'Facture' in s), None)
-            
-            if 'Prestation' not in xl.sheet_names or ong_f is None:
-                st.error(f"Onglets requis manquants. Trouvés : {xl.sheet_names}")
-                st.stop()
-            
-            df_p = pd.read_excel(up, sheet_name='Prestation')
-            df_f = pd.read_excel(up, sheet_name=ong_f)
-            
-            annee = st.sidebar.number_input("Année de clôture :", 2020, 2030, datetime.now().year - 1)
-            limite = pd.Timestamp(year=annee, month=12, day=31)
-
-            # 1. Calcul CA (Prestation - Col L / Index 11)
-            ca_total = pd.to_numeric(df_p.iloc[:, 11], errors='coerce').sum()
-
-            # 2. Calcul Impayés (Facture - Col O / Index 14 et P / Index 15)
-            col_m, col_d = df_f.columns[14], df_f.columns[15]
-            df_f[col_d] = pd.to_datetime(df_f[col_d], errors='coerce')
-            df_f[col_m] = pd.to_numeric(df_f[col_m], errors='coerce').fillna(0)
-
-            # Sécurité Export : vérifier si paiements après 31.12
-            futures = df_f[df_f[col_d] > limite]
-            if not futures.empty:
-                st.error("🛑 **EXPORT NON TRAITABLE**")
-                st.warning(f"L'onglet '{ong_f}' contient des paiements en {annee+1}. L'export doit être arrêté au 31.12.")
-                st.stop()
-
-            # Filtre impayés : Montant > 0 et Date paiement vide
-            df_imp = df_f[(df_f[col_m] != 0) & (df_f[col_d].isna())].copy()
-            total_imp = df_imp[col_m].sum()
-            
-            c1, c2 = st.columns(2)
-            c1.metric(f"📈 CA Annuel {annee}", f"{ca_total:,.2f} CHF")
-            c2.metric(f"⏳ Impayés au 31.12.{annee}", f"{total_imp:,.2f} CHF")
-            
-            st.markdown("---")
-            st.write(f"### Détail des factures impayées au 31.12.{annee}")
-            # Affichage Date (Index 2), Assureur (Index 8), Montant (Index 14)
-            st.dataframe(df_imp[[df_f.columns[2], df_f.columns[8], col_m]].sort_values(df_f.columns[2]), use_container_width=True)
-            
-        except Exception as e: st.error(f"Erreur Bilan : {e}")
