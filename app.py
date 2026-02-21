@@ -317,17 +317,17 @@ elif st.session_state.page == "tarifs":
             df[nom_col_date] = pd.to_datetime(df[nom_col_date], errors='coerce')
             df = df[df[nom_col_somme] > 0].dropna(subset=[nom_col_date, nom_col_somme])
             
-            # --- GESTION DE LA PRÉCISION TEMPORELLE ---
-            st.sidebar.header("📅 Période")
+            # --- GESTION DE LA PÉRIODE ET AFFICHAGE ---
+            st.sidebar.header("📅 Période & Graphique")
             exclure_actuel = st.sidebar.toggle("Exclure le mois en cours", value=True)
+            y_axis_zero = st.sidebar.toggle("Forcer l'axe Y à zéro", value=False)
+            
             maintenant = pd.Timestamp(datetime.today().date())
             
             if exclure_actuel:
-                # La date de référence devient le dernier jour du mois précédent
                 reference_date = maintenant.replace(day=1) - pd.Timedelta(days=1)
                 df = df[df[nom_col_date] <= reference_date]
             else:
-                # La date de référence est aujourd'hui
                 reference_date = maintenant
 
             df['Profession'] = df[nom_col_code].apply(assigner_profession)
@@ -360,10 +360,16 @@ elif st.session_state.page == "tarifs":
                     fig = px.line(df_plot, x='Mois', y=nom_col_somme, color=target_col, 
                                   markers=True, color_discrete_map=color_map)
                 
+                # Application de la logique d'axe Y
+                if y_axis_zero:
+                    fig.update_yaxes(rangemode="tozero")
+                else:
+                    fig.update_yaxes(rangemode="normal")
+
                 fig.update_xaxes(dtick="M1", tickformat="%b %Y")
                 st.plotly_chart(fig, use_container_width=True)
 
-                # 2. TABLEAU DES TENDANCES AVEC RÉFÉRENCE AJUSTÉE
+                # 2. TABLEAU DES TENDANCES
                 st.markdown(f"### 📈 Performance par Tarif (Base : {reference_date.strftime('%d.%m.%Y')})")
                 
                 t_90j = reference_date - pd.DateOffset(days=90)
@@ -449,6 +455,7 @@ elif st.session_state.page == "bilan":
             st.dataframe(df_imp[[df_f.columns[2], df_f.columns[8], col_m]].sort_values(df_f.columns[2]), use_container_width=True)
             
         except Exception as e: st.error(f"Erreur : {e}")
+
 
 
 
