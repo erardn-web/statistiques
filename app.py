@@ -407,14 +407,14 @@ elif st.session_state.page == "tarifs":
                 
         except Exception as e: st.error(f"Erreur Tarifs : {e}")
 # ==========================================
-# 🏦 MODULE BILAN COMPTABLE (VERSION FINALE)
+# 🏦 MODULE BILAN COMPTABLE (V4 - FOCUS CA & CANTONS)
 # ==========================================
 elif st.session_state.page == "bilan":
     if st.sidebar.button("⬅️ Retour Accueil"):
         st.session_state.page = "accueil"
         st.rerun()
 
-    st.title("🏦 Bilan Comptable au 31 Décembre")
+    st.title("🏦 Bilan et Répartition des Revenus")
     up = st.sidebar.file_uploader("Fichier Excel (Prestation + Factures)", type="xlsx", key="bilan_up")
     
     if up:
@@ -429,33 +429,92 @@ elif st.session_state.page == "bilan":
             df_p = pd.read_excel(up, sheet_name='Prestation')
             df_f = pd.read_excel(up, sheet_name=ong_f)
             
-            annee = st.sidebar.number_input("Année de clôture :", 2020, 2030, datetime.now().year - 1)
-            limite = pd.Timestamp(year=annee, month=12, day=31)
-
-            # CA (Index 11 / Col L)
-            ca_total = pd.to_numeric(df_p.iloc[:, 11], errors='coerce').sum()
-
-            # Impayés (Index 14 / Col O et Index 15 / Col P)
-            col_m, col_d = df_f.columns[14], df_f.columns[15]
-            df_f[col_d] = pd.to_datetime(df_f[col_d], errors='coerce')
-            df_f[col_m] = pd.to_numeric(df_f[col_m], errors='coerce').fillna(0)
-
-            if not df_f[df_f[col_d] > limite].empty:
-                st.error("🛑 **EXPORT NON TRAITABLE**")
-                st.warning(f"L'onglet '{ong_f}' contient des paiements après le 31.12.{annee}.")
+            # --- CONFIGURATION ---
+            annee = st.sidebar.number_input("Année d'analyse :", 2020, 2030, 2025)
+            vue = st.sidebar.radio("Affichage du tableau :", ["Bilan Annuel (Global)", "Bilan Mensuel (Détail)"], horizontal=True)
+            
+            # Préparation des colonnes
+            col_date_p = df_p.columns[0]
+            col_ca_p = df_p.columns[11]
+            col_fourn_p = df_p.columns[9] # Colonne J
+            
+            df_p[col_date_p] = pd.to_datetime(df_p[col_date_p], errors='coerce')
+            df_p[col_ca_p] = pd.to_numeric(df_p[col_ca_p], errors='coerce').fillna(0)
+            
+            # Filtrage année
+            df_p_annee = df_p[df_p[col_date_p].dt.year == annee].copy()
+            
+            if df_p_annee.empty:
+                st.warning(f"Aucune donnée de prestation pour l'année {annee}")
                 st.stop()
 
-            df_imp = df_f[(df_f[col_m] != 0) & (df_f[col_d].isna())].copy()
-            total_imp = df_imp[col_m].sum()
+            # --- LOGIQUE CANTONALE AMÉLIORÉE (Basée sur CP ou Nom) ---
+            def extraire_canton(texte):
+                t = str(texte).upper()
+                # Détection par CP (Suisse Romande principalement)
+                if "1211" in t or "1200" in t or "GENÈVE" in t: return "Genève"
+                if "1000" in t or "1001" in t or "1018" in t or "VAUD" in t: return "Vaud"
+                if "1700" in t or "FRIBOURG" in t: return "Fribourg"
+                if "2000" in t or "NEUCHÂTEL" in t: return "Neuchâtel"
+                if "1950" in t or "SION" in t or "VALAIS" in t: return "Valais"
+                if "3000" in t or "BERNE" in t: return "Berne"
+                if "2800" in t or "JURA" in t: return "Jura"
+                return "Autres Cantons"
+
+            df_p_annee['Canton'] = df_p_annee[col_fourn_p].apply(extraire_canton)
+
+            # --- CALCULS ---
+            ca_total = df_p_annee[col_ca_p].sum()
+            ca_canton = df_p_annee.groupby('Canton')[col_ca_p].sum().sort_values(ascending=False).reset_index()
+            ca_fourn = df_p_annee.groupby(col_fourn_p)[col_ca_p].sum().sort_values(ascending=False).reset_index()
+
+            # --- AFFICHAGE DES MÉTRIQUES ---
+            st.metric(f"💰 CHIFFRE D'AFFAIRES TOTAL {annee}", f"{ca_total:,.2f} CHF")
+            st.markdown("---")
+
+            col_a, col_b = st.columns(2)
             
-            c1, c2 = st.columns(2)
-            c1.metric(f"📈 CA Annuel {annee}", f"{ca_total:,.2f} CHF")
-            c2.metric(f"⏳ Impayés au 31.12.{annee}", f"{total_imp:,.2f} CHF")
+            with col_a:
+                st.subheader("📍 Répartition par Canton")
+                fig_canton = px.pie(ca_canton, values=col_ca_p, names='Canton', hole=0.4,
+                                   color_discrete_sequence=px.colors.qualitative.Pastel)
+                st.plotly_chart(fig_canton, use_container_width=True)
+
+            with col_b:
+                st.subheader("🏢 Top Fournisseurs")
+                st.dataframe(ca_fourn, use_container_width=True, hide_index=True,
+                             column_config={col_fourn_p: "Fournisseur", col_ca_p: st.column_config.NumberColumn("CA", format="%.2f CHF")})
+
+            st.markdown("---")
             
-            st.dataframe(df_imp[[df_f.columns[2], df_f.columns[8], col_m]].sort_values(df_f.columns[2]), use_container_width=True)
-            
-        except Exception as e: st.error(f"Erreur : {e}")
+            # --- TABLEAUX DE BILAN ---
+            if "Annuel" in vue:
+                st.subheader(f"📊 Bilan Annuel par Canton ({annee})")
+                st.dataframe(ca_canton, use_container_width=True, hide_index=True,
+                             column_config={"Canton": "Canton", col_ca_p: st.column_config.NumberColumn("Chiffre d'Affaires", format="%.2f CHF")})
+            else:
+                st.subheader(f"📅 Bilan Mensuel Détaillé ({annee})")
+                df_p_annee['Mois_Num'] = df_p_annee[col_date_p].dt.month
+                nom_mois = ["Jan", "Fév", "Mar", "Avr", "Mai", "Jun", "Jul", "Août", "Sep", "Oct", "Nov", "Déc"]
+                
+                tab_mensuel = df_p_annee.pivot_table(
+                    index='Canton', 
+                    columns='Mois_Num', 
+                    values=col_ca_p, 
+                    aggfunc='sum', 
+                    fill_value=0
+                )
+                # Renommer les colonnes avec les noms des mois présents
+                tab_mensuel.columns = [nom_mois[m-1] for m in tab_mensuel.columns]
+                # Ajouter un total ligne
+                tab_mensuel['TOTAL'] = tab_mensuel.sum(axis=1)
+                
+                st.dataframe(tab_mensuel.style.format("{:.2f}").highlight_max(axis=0, color="#d4f1f9"), use_container_width=True)
 
+            # --- SECTION IMPAYÉS ---
+            st.markdown("---")
+            col_m, col_d = df_f.columns[14], df_f.columns[15]
+            total_imp = pd.to_numeric(df_f[df_f[col_d].isna()][col_m], errors='coerce').sum()
+            st.info(f"👉 **Impayés au 31.12.{annee}** (factures sans date de paiement) : **{total_imp:,.2f} CHF**")
 
-
-
+        except Exception as e: st.error(f"Erreur Bilan : {e}")
