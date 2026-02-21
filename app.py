@@ -295,21 +295,21 @@ elif st.session_state.page == "medecins":
         except Exception as e: st.error(f"Erreur technique : {e}")
 
 # ==========================================
-# 🏷️ MODULE TARIFS (LOGIQUE MISE À JOUR + EXCLUSION MOIS EN COURS)
+# 🏷️ MODULE TARIFS (PERFORMANCE & TENDANCES)
 # ==========================================
 elif st.session_state.page == "tarifs":
     if st.sidebar.button("⬅️ Retour Accueil"):
         st.session_state.page = "accueil"
         st.rerun()
 
-    st.title("📊 Analyse des revenus mensuels")
+    st.title("📊 Analyse des revenus mensuels et Tendances")
     uploaded_file = st.sidebar.file_uploader("📂 Déposer l'export Excel (onglet 'Prestation')", type="xlsx", key="tarif_up")
 
     if uploaded_file:
         try:
             df = pd.read_excel(uploaded_file, sheet_name='Prestation')
-            nom_col_code = df.columns[2]   # C
-            nom_col_somme = df.columns[11] # L
+            nom_col_code = df.columns[2]   # C (Tarif)
+            nom_col_somme = df.columns[11] # L (Montant)
             date_cols = [c for c in df.columns if 'Date' in str(c)]
             nom_col_date = date_cols[0] if date_cols else df.columns[0]
 
@@ -317,23 +317,21 @@ elif st.session_state.page == "tarifs":
             df[nom_col_date] = pd.to_datetime(df[nom_col_date], errors='coerce')
             df = df[df[nom_col_somme] > 0].dropna(subset=[nom_col_date, nom_col_somme])
             
-            # --- OPTION EXCLURE LE MOIS EN COURS ---
+            # --- OPTION PÉRIODE ---
             st.sidebar.header("📅 Période")
             exclure_actuel = st.sidebar.toggle("Exclure le mois en cours", value=True)
+            ajd = pd.Timestamp(datetime.today().date())
             
             if exclure_actuel:
-                premier_du_mois = datetime.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+                premier_du_mois = ajd.replace(day=1)
                 df = df[df[nom_col_date] < premier_du_mois]
 
             df['Profession'] = df[nom_col_code].apply(assigner_profession)
 
-            # --- FILTRAGE PAR MÉTIERS ET CODES ---
+            # --- FILTRAGE ---
             st.sidebar.header("⚙️ Filtres")
             professions_dispo = sorted(df['Profession'].unique())
-            metiers_actifs = []
-            for p in professions_dispo:
-                if st.sidebar.checkbox(p, value=True, key=f"check_{p}"):
-                    metiers_actifs.append(p)
+            metiers_actifs = [p for p in professions_dispo if st.sidebar.checkbox(p, value=True, key=f"t_check_{p}")]
 
             codes_possibles = df[df['Profession'].isin(metiers_actifs)]
             liste_codes = sorted(codes_possibles[nom_col_code].unique().astype(str))
@@ -345,12 +343,12 @@ elif st.session_state.page == "tarifs":
             df_filtered = df[df[nom_col_code].astype(str).isin(selection_codes)].copy()
 
             if not df_filtered.empty:
+                # 1. GRAPHIQUE D'ÉVOLUTION
                 df_filtered['Mois'] = df_filtered[nom_col_date].dt.to_period('M').dt.to_timestamp()
                 target_col = "Profession" if view_mode == "Profession" else nom_col_code
                 df_plot = df_filtered.groupby(['Mois', target_col])[nom_col_somme].sum().reset_index()
                 
                 color_map = COULEURS_PROF if view_mode == "Profession" else None
-                
                 if chart_type == "Barres":
                     fig = px.bar(df_plot, x='Mois', y=nom_col_somme, color=target_col, 
                                  barmode='group', color_discrete_map=color_map, text_auto='.2f')
@@ -360,10 +358,45 @@ elif st.session_state.page == "tarifs":
                 
                 fig.update_xaxes(dtick="M1", tickformat="%b %Y")
                 st.plotly_chart(fig, use_container_width=True)
-                with st.expander("📄 Détails des données"):
-                    st.dataframe(df_plot.sort_values(['Mois', nom_col_somme], ascending=[False, False]), use_container_width=True)
+
+                # 2. TABLEAU DES TENDANCES (Logique Médecins appliquée aux Tarifs)
+                st.markdown("### 📈 Analyse de Performance par Code Tarifaire")
+                
+                t_90j, t_365j = ajd - pd.DateOffset(days=90), ajd - pd.DateOffset(days=365)
+                
+                # Calculs des agrégats
+                stats_global = df_filtered.groupby(nom_col_code)[nom_col_somme].sum().reset_index(name="CA Global")
+                ca_90 = df_filtered[df_filtered[nom_col_date] >= t_90j].groupby(nom_col_code)[nom_col_somme].sum().reset_index(name="CA 90j")
+                ca_365 = df_filtered[df_filtered[nom_col_date] >= t_365j].groupby(nom_col_code)[nom_col_somme].sum().reset_index(name="CA 365j")
+                
+                # Fusion des données
+                tab_perf = stats_global.merge(ca_365, on=nom_col_code, how="left").merge(ca_90, on=nom_col_code, how="left").fillna(0)
+                
+                # Calcul de la Tendance
+                def calculer_tendance_tarif(r):
+                    if r['CA 365j'] > 0:
+                        ratio = (r['CA 90j'] / r['CA 365j']) * 100
+                        if ratio <= 23: return f"↘️ Baisse ({ratio:.1f}%)"
+                        if ratio >= 27: return f"↗️ Hausse ({ratio:.1f}%)"
+                        return "➡️ Stable"
+                    return "N/A"
+
+                tab_perf["Tendance"] = tab_perf.apply(calculer_tendance_tarif, axis=1)
+                
+                # Affichage final
+                st.dataframe(
+                    tab_perf.sort_values("CA Global", ascending=False),
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={
+                        nom_col_code: "Code Tarifaire",
+                        "CA Global": st.column_config.NumberColumn("CA Global", format="%.2f CHF"),
+                        "CA 365j": st.column_config.NumberColumn("CA 365j", format="%.2f CHF"),
+                        "CA 90j": st.column_config.NumberColumn("CA 90j", format="%.2f CHF")
+                    }
+                )
             else:
-                st.warning("Aucune donnée disponible après filtrage.")
+                st.warning("Aucune donnée disponible pour cette sélection.")
                 
         except Exception as e: st.error(f"Erreur Tarifs : {e}")
 # ==========================================
@@ -415,4 +448,5 @@ elif st.session_state.page == "bilan":
             st.dataframe(df_imp[[df_f.columns[2], df_f.columns[8], col_m]].sort_values(df_f.columns[2]), use_container_width=True)
             
         except Exception as e: st.error(f"Erreur : {e}")
+
 
