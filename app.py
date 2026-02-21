@@ -407,97 +407,88 @@ elif st.session_state.page == "tarifs":
                 
         except Exception as e: st.error(f"Erreur Tarifs : {e}")
 # ==========================================
-# 🏦 MODULE BILAN COMPTABLE (V8 - SOURCE ONGLET FACTURE)
+# 🏦 MODULE BILAN COMPTABLE (V9 - CA FOURNISSEURS & IMPAYÉS)
 # ==========================================
 elif st.session_state.page == "bilan":
     if st.sidebar.button("⬅️ Retour Accueil"):
         st.session_state.page = "accueil"
         st.rerun()
 
-    st.title("🏦 Bilan par Fournisseurs et Cantons")
+    st.title("🏦 Bilan des Revenus par Fournisseur")
     up = st.sidebar.file_uploader("Fichier Excel (Export avec onglet Facture)", type="xlsx", key="bilan_up")
     
     if up:
         try:
             xl = pd.ExcelFile(up)
-            # Recherche de l'onglet Facture
             ong_f = next((s for s in xl.sheet_names if 'Facture' in s), None)
             
             if not ong_f:
-                st.error("L'onglet 'Facture' est introuvable dans le fichier.")
+                st.error("L'onglet 'Facture' est introuvable.")
                 st.stop()
             
             df_f = pd.read_excel(up, sheet_name=ong_f)
             
-            # --- CONFIGURATION DES COLONNES (Basé sur tes indications) ---
+            # --- CONFIGURATION DES COLONNES ---
             col_date_f = df_f.columns[2]   # C: Date de la facture
-            col_fourn_f = df_f.columns[9]  # J: Fournisseur (contient le NPA)
+            col_fourn_f = df_f.columns[9]  # J: Fournisseur
             col_ca_f = df_f.columns[14]    # O: Montant (CA)
+            col_paye_f = df_f.columns[15]  # P: Date de paiement (pour impayés)
             
-            # Conversion et nettoyage
+            # Nettoyage
             df_f[col_date_f] = pd.to_datetime(df_f[col_date_f], errors='coerce')
             df_f[col_ca_f] = pd.to_numeric(df_f[col_ca_f], errors='coerce').fillna(0)
             df_f = df_f.dropna(subset=[col_date_f])
 
-            # Choix de l'année basé sur la colonne C
+            # Choix de l'année
             annees = sorted(df_f[col_date_f].dt.year.unique().astype(int), reverse=True)
-            annee = st.sidebar.selectbox("Sélectionner l'année :", annees)
+            annee = st.sidebar.selectbox("Année d'analyse :", annees)
             df_sel = df_f[df_f[col_date_f].dt.year == annee].copy()
 
-            # --- LOGIQUE DE DÉTECTION PAR NPA SUISSE ---
-            def attribuer_canton_npa(texte):
-                import re
-                # Extraction du nombre de 4 chiffres (NPA)
-                npa_match = re.search(r'\b(\d{4})\b', str(texte))
-                if not npa_match: return "NPA non détecté"
-                
-                npa = int(npa_match.group(1))
-                
-                if 1200 <= npa <= 1299: return "Genève"
-                if 1000 <= npa <= 1199 or 1300 <= npa <= 1499 or 1800 <= npa <= 1869: return "Vaud"
-                if 1700 <= npa <= 1799: return "Fribourg"
-                if 1870 <= npa <= 1999: return "Valais"
-                if 2000 <= npa <= 2499: return "Neuchâtel"
-                if 2500 <= npa <= 2999: return "Berne / Jura"
-                if 3000 <= npa <= 3999: return "Berne / Valais Haut"
-                return "Autres"
+            # --- SECTION CHIFFRE D'AFFAIRES ---
+            st.subheader(f"📊 Analyse du Chiffre d'Affaires ({annee})")
+            vue_ca = st.radio("Affichage CA par Fournisseur :", ["Annuel (Cumulé)", "Mensuel (Détail)"], horizontal=True)
 
-            df_sel['Canton'] = df_sel[col_fourn_f].apply(attribuer_canton_npa)
-
-            # --- AFFICHAGE ---
-            total_ca = df_sel[col_ca_f].sum()
-            st.metric(f"CHIFFRE D'AFFAIRES TOTAL {annee} (Onglet Facture)", f"{total_ca:,.2f} CHF")
-
-            # 1. TABLEAU PAR FOURNISSEUR (Colonne J)
-            st.subheader("🏢 Chiffre d'Affaires par Fournisseur")
-            ca_par_fournisseur = df_sel.groupby(col_fourn_f)[col_ca_f].sum().sort_values(ascending=False).reset_index()
-            st.dataframe(
-                ca_par_fournisseur, 
-                use_container_width=True, 
-                hide_index=True,
-                column_config={col_fourn_f: "Fournisseur", col_ca_f: st.column_config.NumberColumn("Somme CA", format="%.2f CHF")}
-            )
-
-            # 2. ANALYSE CANTONALE
-            st.markdown("---")
-            vue = st.radio("Type de Bilan :", ["Annuel", "Mensuel"], horizontal=True)
-
-            if vue == "Annuel":
-                st.subheader(f"📍 Bilan Annuel par Canton ({annee})")
-                ca_canton = df_sel.groupby('Canton')[col_ca_f].sum().sort_values(ascending=False).reset_index()
-                st.dataframe(ca_canton, use_container_width=True, hide_index=True, 
-                             column_config={col_ca_f: st.column_config.NumberColumn("Total", format="%.2f CHF")})
+            if vue_ca == "Annuel (Cumulé)":
+                ca_fourn = df_sel.groupby(col_fourn_f)[col_ca_f].sum().sort_values(ascending=False).reset_index()
+                st.dataframe(
+                    ca_fourn, 
+                    use_container_width=True, 
+                    hide_index=True,
+                    column_config={col_fourn_f: "Fournisseur", col_ca_f: st.column_config.NumberColumn("Total CA", format="%.2f CHF")}
+                )
             else:
-                st.subheader(f"📅 Bilan Mensuel par Canton ({annee})")
                 df_sel['Mois_Num'] = df_sel[col_date_f].dt.month
                 nom_mois = ["Jan", "Fév", "Mar", "Avr", "Mai", "Jun", "Jul", "Août", "Sep", "Oct", "Nov", "Déc"]
                 
-                pivot = df_sel.pivot_table(index='Canton', columns='Mois_Num', values=col_ca_f, aggfunc='sum', fill_value=0)
-                pivot = pivot.reindex(columns=range(1, 13), fill_value=0)
-                pivot.columns = nom_mois
-                pivot['TOTAL'] = pivot.sum(axis=1)
+                pivot_fourn = df_sel.pivot_table(index=col_fourn_f, columns='Mois_Num', values=col_ca_f, aggfunc='sum', fill_value=0)
+                pivot_fourn = pivot_fourn.reindex(columns=range(1, 13), fill_value=0)
+                pivot_fourn.columns = nom_mois
+                pivot_fourn['TOTAL'] = pivot_fourn.sum(axis=1)
                 
-                st.dataframe(pivot.style.format("{:.2f}"), use_container_width=True)
+                st.dataframe(pivot_fourn.style.format("{:.2f}"), use_container_width=True)
+
+            # --- SECTION IMPAYÉS AU 31.12 ---
+            st.markdown("---")
+            st.subheader(f"⏳ Factures Impayées au 31.12.{annee}")
+            
+            # Un impayé est une facture de l'année sélectionnée où la date de paiement (P) est vide
+            df_impayes = df_sel[df_sel[col_paye_f].isna()].copy()
+            total_impayes = df_impayes[col_ca_f].sum()
+
+            if total_impayes > 0:
+                st.warning(f"Montant total restant à percevoir pour {annee} : **{total_impayes:,.2f} CHF**")
+                
+                # Détail des impayés par fournisseur
+                imp_par_fourn = df_impayes.groupby(col_fourn_f)[col_ca_f].sum().sort_values(ascending=False).reset_index()
+                with st.expander("Voir le détail des impayés par fournisseur"):
+                    st.dataframe(
+                        imp_par_fourn, 
+                        use_container_width=True, 
+                        hide_index=True,
+                        column_config={col_fourn_f: "Fournisseur", col_ca_f: st.column_config.NumberColumn("Montant dû", format="%.2f CHF")}
+                    )
+            else:
+                st.success(f"Toutes les factures de l'année {annee} sont marquées comme payées.")
 
         except Exception as e:
             st.error(f"Erreur d'analyse : {e}")
