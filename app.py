@@ -513,28 +513,21 @@ elif st.session_state.page == "bilan":
         except Exception as e:
             st.error(f"Erreur d'analyse : {e}")
 
-import streamlit as st
-import pandas as pd
-
-import streamlit as st
-import pandas as pd
-from datetime import timedelta
-
 # ==========================================
-# 👥 MODULE : STATISTIQUES & FLUX (V10 - Flux Réel vs Théorique)
+# 👥 MODULE : PILOTAGE FLUX (V11 - Correctif)
 # ==========================================
 def render_stats_patients():
-    if st.sidebar.button("⬅️ Retour Accueil", key="btn_back_v10"):
+    if st.sidebar.button("⬅️ Retour Accueil", key="btn_back_v11"):
         st.session_state.page = "accueil"
         st.rerun()
 
     st.sidebar.markdown("---")
-    uploaded_file = st.sidebar.file_uploader("📂 Déposer l'export Excel", type="xlsx", key="uploader_v10")
+    uploaded_file = st.sidebar.file_uploader("📂 Déposer l'export Excel", type="xlsx", key="uploader_v11")
 
     st.title("👥 Pilotage du Flux Patients")
 
     if not uploaded_file:
-        st.info("👋 Chargez un fichier Excel pour comparer votre recrutement réel à vos besoins théoriques.")
+        st.info("👋 Chargez un fichier Excel pour activer l'analyse comparative.")
         return
 
     try:
@@ -550,57 +543,49 @@ def render_stats_patients():
             codes = ["7301", "7311", "25.110"]
             df_f = df[(df[c_mont] > 0) & (df[c_tarif].isin(codes))].dropna(subset=[c_date, c_pat]).copy()
             
-            # --- 1. CALCULS HISTORIQUES (Rythme & Séances) ---
+            # --- 1. CALCULS HISTORIQUES ---
             p_stats = df_f.groupby(c_pat).agg(
                 nb_seances=(c_pat, 'size'),
                 date_min=(c_date, 'min'),
                 date_max=(c_date, 'max')
             )
-            p_stats['jours'] = (p_stats['date_max'] - p_stats['date_min']).dt.days
-            p_suivis = p_stats[p_stats['jours'] >= 7]
-            rythme = p_suivis['nb_seances'].sum() / (p_suivis['jours'].sum() / 7) if not p_suivis.empty else 1.1
-
-            # --- 2. CALCUL DU FLUX RÉEL (Nouveaux patients) ---
-            # Un nouveau patient est défini par sa date de première apparition
-            derniere_date_fichier = df_f[c_date].max()
             
-            def compter_nouveaux(jours_arriere):
-                date_limite = derniere_date_fichier - timedelta(days=jours_arriere)
-                nouveaux = p_stats[p_stats['date_min'] >= date_limite]
-                nb = len(nouveaux)
-                # Calcul des jours ouvrés (lun-ven) sur la période
-                nb_semaines = jours_arriere / 7
-                jours_ouvres = nb_semaines * 5
-                return nb, nb / jours_ouvres if jours_ouvres > 0 else 0
+            p_stats['jours_vie'] = (p_stats['date_max'] - p_stats['date_min']).dt.days
+            p_suivis = p_stats[p_stats['jours_vie'] >= 7]
+            rythme = p_suivis['nb_seances'].sum() / (p_suivis['jours_vie'].sum() / 7) if not p_suivis.empty else 1.1
 
-            flux_30 = compter_nouveaux(30)
-            flux_60 = compter_nouveaux(60)
-            flux_120 = compter_nouveaux(120)
+            # --- 2. CALCUL DU FLUX RÉEL (Correction du décompte) ---
+            derniere_date = df_f[c_date].max()
+            
+            def stats_periode(jours):
+                seuil = derniere_date - timedelta(days=jours)
+                # On compte uniquement ceux dont la PREMIÈRE séance est après le seuil
+                nouveaux = p_stats[p_stats['date_min'] >= seuil]
+                count = len(nouveaux)
+                jours_ouvres = (jours / 7) * 5
+                return count, count / jours_ouvres if jours_ouvres > 0 else 0
 
             return {
                 "moy_seances": p_stats['nb_seances'].mean(),
                 "rythme_reel": rythme,
-                "flux_reel": {"30j": flux_30, "60j": flux_60, "120j": flux_120},
-                "derniere_date": derniere_date_fichier
+                "flux_30": stats_periode(30),
+                "flux_60": stats_periode(60),
+                "flux_120": stats_periode(120),
+                "derniere_date": derniere_date
             }
 
         data = get_full_analysis(uploaded_file)
 
         # --- AFFICHAGE ANALYSE RÉELLE ---
-        st.subheader(f"📈 Analyse du recrutement réel (au {data['derniere_date'].strftime('%d/%m/%Y')})")
-        st.caption("Basé sur la première apparition de chaque patient. Moyenne calculée sur 5 jours ouvrés par semaine.")
-        
+        st.subheader(f"📈 Recrutement Réel (Calculé au {data['derniere_date'].strftime('%d/%m/%Y')})")
         c_r1, c_r2, c_r3 = st.columns(3)
-        with c_r1:
-            st.metric("Derniers 30 jours", f"{data['flux_reel']['30j'][0]} pat.", f"{data['flux_reel']['30j'][1]:.1f} / jour")
-        with c_r2:
-            st.metric("Derniers 60 jours", f"{data['flux_reel']['60j'][0]} pat.", f"{data['flux_reel']['60j'][1]:.1f} / jour")
-        with c_r3:
-            st.metric("Derniers 120 jours", f"{data['flux_reel']['120j'][0]} pat.", f"{data['flux_reel']['120j'][1]:.1f} / jour")
+        c_r1.metric("Derniers 30j", f"{data['flux_30'][0]} pat.", f"{data['flux_30'][1]:.1f} / jour")
+        c_r2.metric("Derniers 60j", f"{data['flux_60'][0]} pat.", f"{data['flux_60'][1]:.1f} / jour")
+        c_r3.metric("Derniers 120j", f"{data['flux_120'][0]} pat.", f"{data['flux_120'][1]:.1f} / jour")
 
-        # --- FORMULAIRE DE CONFIGURATION ---
-        with st.form("form_v10"):
-            st.subheader("⚙️ Simulation des besoins théoriques")
+        # --- FORMULAIRE CONFIGURATION ---
+        with st.form("form_v11"):
+            st.subheader("⚙️ Simulation des besoins (A & B)")
             if 'capa_df' not in st.session_state:
                 st.session_state.capa_df = pd.DataFrame([
                     {"Thérapeute": f"Thérapeute {i}", "Cabinet": "A" if i <= 6 else "B", 
@@ -618,10 +603,11 @@ def render_stats_patients():
                 in_occup = st.slider("Taux d'occupation visé (%)", 50, 100, 85)
                 in_jours = st.slider("Jours d'ouverture / semaine", 1, 6, 5)
 
-            btn_go = st.form_submit_button("🚀 COMPARER RÉEL VS THÉORIQUE", use_container_width=True, type="primary")
+            btn_go = st.form_submit_button("🚀 CALCULER ET COMPARER", use_container_width=True, type="primary")
 
         if btn_go:
             st.session_state.capa_df = edited_df
+            
             def calc_needs(df_p):
                 annuel = (df_p['Places/Sem'] * df_p['Semaines/an']).sum()
                 capa_h = (annuel * (in_occup/100)) / 52.14
@@ -629,27 +615,28 @@ def render_stats_patients():
                 return capa_h, flux_h
 
             df_act = edited_df[edited_df['Places/Sem'] > 0]
-            capa_g, flux_g = calc_needs(df_act)
             
-            # Affichage Comparatif
-            st.markdown("---")
-            st.header("🏁 Verdict : Équilibre du Cabinet")
-            
-            flux_reel_moyen = data['flux_reel']['60j'][1]
-            flux_theorique = flux_g / in_jours
-            diff = flux_reel_moyen - flux_theorique
-            
-            c_v1, c_v2, c_v3 = st.columns(3)
-            c_v1.metric("Besoin Théorique", f"{flux_theorique:.1f} / jour")
-            c_v2.metric("Réel (60j)", f"{flux_reel_moyen:.1f} / jour")
-            c_v3.metric("Écart", f"{diff:.1f} / jour", delta=round(diff, 1))
+            # Calculs ventilés
+            c_tot, f_tot = calc_needs(df_act)
+            c_a, f_a = calc_needs(df_act[df_act['Cabinet'] == "A"])
+            c_b, f_b = calc_needs(df_act[df_act['Cabinet'] == "B"])
 
-            if diff > 0.2:
-                st.success(f"✅ **Sur-recrutement :** Vous recrutez plus que nécessaire ({diff:.1f} pat/jour en trop). Vos listes d'attente doivent augmenter.")
-            elif diff < -0.2:
-                st.error(f"⚠️ **Sous-recrutement :** Il vous manque {abs(diff):.1f} patient(s) par jour pour maintenir vos objectifs d'occupation.")
-            else:
-                st.info("⚖️ **Équilibre parfait :** Votre recrutement actuel couvre exactement vos besoins de renouvellement.")
+            st.markdown("---")
+            t_all, t_a, t_b = st.tabs(["📊 TOTAL", "🏠 CABINET A", "🏠 CABINET B"])
+
+            with t_all:
+                st.success(f"### Besoin Total : **{(f_tot/in_jours):.1f}** nouveaux / jour")
+                # Comparaison (basée sur 60j)
+                diff = data['flux_60'][1] - (f_tot/in_jours)
+                st.metric("Équilibre (Réel vs Théorique)", f"{data['flux_60'][1]:.1f} / jour", delta=round(diff, 1))
+
+            with t_a:
+                st.info(f"### Besoin A : **{(f_a/in_jours):.1f}** nouveaux / jour")
+                st.metric("Capacité Cible A", f"{c_a:.1f} RDV/sem")
+
+            with t_b:
+                st.warning(f"### Besoin B : **{(f_b/in_jours):.1f}** nouveaux / jour")
+                st.metric("Capacité Cible B", f"{c_b:.1f} RDV/sem")
 
     except Exception as e:
         st.error(f"❌ Erreur : {e}")
