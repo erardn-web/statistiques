@@ -629,3 +629,13 @@ if 'page' not in st.session_state:
     st.session_state.page = "accueil"
 
 if st.session_state.page == "stats_patients":
+    # --- LOGIQUE DE NAVIGATION ---
+if 'page' not in st.session_state:
+    st.session_state.page = "accueil"
+
+if st.session_state.page == "accueil":
+    render_accueil()  # Votre fonction de page d'accueil
+
+elif st.session_state.page == "stats_patients":
+    render_stats_patients()  # <-- Cette ligne doit être décalée par rapport au "elif"
+
