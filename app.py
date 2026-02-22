@@ -514,7 +514,7 @@ elif st.session_state.page == "bilan":
             st.error(f"Erreur d'analyse : {e}")
 
 # ==========================================
-# 👥 MODULE : STATISTIQUES & FLUX PATIENTS (V6 - Final)
+# 👥 MODULE : STATISTIQUES & FLUX PATIENTS (V7 - 12 Thérapeutes)
 # ==========================================
 def render_stats_patients():
     # 1. Barre latérale : Retour et Upload
@@ -523,21 +523,14 @@ def render_stats_patients():
         st.rerun()
 
     st.sidebar.markdown("---")
-    uploaded_file = st.sidebar.file_uploader("📂 Déposer l'export Excel (Prestation)", type="xlsx", key="stats_final_up")
+    uploaded_file = st.sidebar.file_uploader("📂 Déposer l'export Excel (Prestation)", type="xlsx", key="stats_v7_up")
 
     # Titre principal
     st.title("👥 Statistiques & Planification du Flux")
 
-    # Sécurité : Si pas de fichier, on affiche un guide visuel
+    # Sécurité : Si pas de fichier
     if not uploaded_file:
-        st.info("👋 **Bienvenue dans le module de planification.**")
-        st.markdown("""
-        Pour commencer, veuillez charger votre export Excel dans la barre latérale. 
-        Ce module va :
-        1. Analyser la durée moyenne de vos traitements.
-        2. Calculer votre capacité réelle (incluant les vacances).
-        3. Déterminer votre besoin quotidien en nouveaux patients selon vos objectifs.
-        """)
+        st.info("👋 Veuillez charger votre export Excel dans la barre latérale pour commencer.")
         return
 
     try:
@@ -546,13 +539,8 @@ def render_stats_patients():
         def process_data(file):
             df = pd.read_excel(file, sheet_name='Prestation')
             df.columns = [str(c).strip() for c in df.columns]
-            
-            # Identification auto des colonnes
             col_date, col_tarif, col_patient, col_montant = df.columns[0], df.columns[2], df.columns[8], df.columns[11]
-            
             df[col_tarif] = df[col_tarif].astype(str).str.strip()
-            df[col_date] = pd.to_datetime(df[col_date], errors='coerce')
-            
             codes = ["7301", "7311", "25.110"]
             df_filtred = df[(df[col_montant] > 0) & (df[col_tarif].isin(codes))].copy()
             return df_filtred, col_patient
@@ -567,36 +555,47 @@ def render_stats_patients():
         stats_p = df_seances.groupby(col_patient).size().reset_index(name='nb_seances')
         moyenne_obs = stats_p['nb_seances'].mean()
 
-        # 4. FORMULAIRE DE CONFIGURATION (Anti-lenteur)
-        with st.form("form_master_plan"):
-            st.subheader("⚙️ Paramètres de l'Équipe & Objectifs")
+        # 4. FORMULAIRE DE CONFIGURATION
+        with st.form("form_master_plan_v7"):
+            st.subheader("⚙️ Paramètres de l'Équipe (Cible : 12 Thérapeutes)")
             
-            # Tableau des thérapeutes
+            # --- PRÉCONFIGURATION DES 12 THÉRAPEUTES ---
             if 'capa_df' not in st.session_state:
-                st.session_state.capa_df = pd.DataFrame([
-                    {"Thérapeute": "Thérapeute 1", "Places/Sem": 40, "Semaines/an": 43},
-                    {"Thérapeute": "Thérapeute 2", "Places/Sem": 40, "Semaines/an": 43},
-                ])
+                data_init = []
+                for i in range(1, 13):
+                    data_init.append({
+                        "Thérapeute": f"Thérapeute {i}", 
+                        "Places/Sem": 40 if i <= 3 else 0, # Ex: 3 actifs par défaut, les autres à 0
+                        "Semaines/an": 43
+                    })
+                st.session_state.capa_df = pd.DataFrame(data_init)
             
-            edited_df = st.data_editor(st.session_state.capa_df, num_rows="dynamic", use_container_width=True)
+            # Affichage du tableau éditable
+            edited_df = st.data_editor(
+                st.session_state.capa_df, 
+                num_rows="dynamic", 
+                use_container_width=True
+            )
             
             st.markdown("---")
             c1, c2 = st.columns(2)
             with c1:
-                val_moyenne = st.number_input("Nombre de séances par traitement", value=float(round(moyenne_obs, 1)), step=0.5)
-                intensite = st.slider("Rythme (séances / semaine / patient)", 0.5, 3.0, 1.2, 0.1)
+                val_moyenne = st.number_input("Séances moyennes par traitement (calculé)", value=float(round(moyenne_obs, 1)), step=0.5)
+                intensite = st.slider("Fréquence (séances / semaine / patient)", 0.5, 3.0, 1.2, 0.1)
             with c2:
                 target_occup = st.slider("Taux d'occupation visé (%)", 50, 100, 85, 5)
-                jours_ouvrables = st.slider("Jours d'ouverture du cabinet / semaine", 1, 6, 5)
+                jours_ouvrables = st.slider("Jours d'ouverture / semaine", 1, 6, 5)
 
-            submit = st.form_submit_button("🚀 LANCER LE CALCUL ET L'ANALYSE", use_container_width=True, type="primary")
+            submit = st.form_submit_button("🚀 LANCER LE CALCUL", use_container_width=True, type="primary")
 
-        # 5. RESULTATS ET EXPLICATIONS
+        # 5. RESULTATS
         if submit:
             st.session_state.capa_df = edited_df
             
-            # Calculs mathématiques
-            total_annuel_theorique = (edited_df['Places/Sem'] * edited_df['Semaines/an']).sum()
+            # Calculs : On ne prend que les thérapeutes ayant au moins 1 place/semaine
+            df_actifs = edited_df[edited_df['Places/Sem'] > 0].copy()
+            
+            total_annuel_theorique = (df_actifs['Places/Sem'] * df_actifs['Semaines/an']).sum()
             total_annuel_cible = total_annuel_theorique * (target_occup / 100)
             capa_hebdo_lissee = total_annuel_cible / 52.14
             
@@ -607,31 +606,26 @@ def render_stats_patients():
             st.success(f"### Objectif : **{besoin_jour:.1f}** nouveaux patients / jour")
             
             r1, r2, r3 = st.columns(3)
-            r1.metric("Capacité Cible", f"{capa_hebdo_lissee:.1f} RDV/sem")
+            r1.metric("Places réelles / sem (Moyenne)", f"{capa_hebdo_lissee:.1f}")
             r2.metric("Nouveaux patients / sem", f"{besoin_hebdo:.1f}")
             r3.metric("Nouveaux patients / mois", f"{int(besoin_hebdo * 4.34)}")
 
-            # Section pédagogique
-            st.subheader("📖 Pourquoi ces chiffres ?")
+            # --- EXPLICATION ---
+            st.subheader("📖 Interprétation")
             exp1, exp2 = st.columns(2)
-            
             with exp1:
-                st.write("**Votre Capacité :**")
-                st.write(f"En comptant les vacances de chacun, votre cabinet peut honorer **{int(total_annuel_cible)}** rendez-vous par an pour atteindre votre objectif de **{target_occup}%** de remplissage.")
-            
+                st.write("**Capacité de production :**")
+                st.write(f"Avec {len(df_actifs)} thérapeutes actifs, votre cabinet vise un volume annuel de **{int(total_annuel_cible)}** séances.")
             with exp2:
-                duree_traitement_semaines = val_moyenne / intensite
-                st.write("**Le Flux Patient :**")
-                st.write(f"Un patient reste chez vous environ **{duree_traitement_semaines:.1f} semaines**. Pour maintenir vos agendas pleins, vous devez donc remplacer chaque place libérée toutes les {duree_traitement_semaines:.1f} semaines.")
+                duree_traitement_sem = val_moyenne / intensite
+                st.write("**Flux de renouvellement :**")
+                st.write(f"Le traitement moyen durant **{duree_traitement_sem:.1f} semaines**, il faut ce volume d'entrées pour compenser les fins de prises en charge.")
 
     except Exception as e:
-        st.error(f"❌ Une erreur est survenue : {e}")
+        st.error(f"❌ Erreur : {e}")
 
-# ==========================================
-# GESTION DE LA NAVIGATION (À vérifier !)
-# ==========================================
+# Appel de la fonction
 if 'page' not in st.session_state:
     st.session_state.page = "accueil"
 
 if st.session_state.page == "stats_patients":
-    render_stats_patients()
