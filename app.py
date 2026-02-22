@@ -88,6 +88,12 @@ if st.session_state.page == "accueil":
             st.session_state.page = "bilan"
             st.rerun()
 
+    with col5:
+        st.info("👥 **STATISTIQUES PATIENTS**")
+        if st.button("Nombre de séances", use_container_width=True):
+            st.session_state.page = "stats_patients"
+            st.rerun()
+
 # ==========================================
 # 📊 MODULE FACTURES (ORIGINAL RÉPARÉ)
 # ==========================================
@@ -506,5 +512,82 @@ elif st.session_state.page == "bilan":
 
         except Exception as e:
             st.error(f"Erreur d'analyse : {e}")
+
+# ==========================================
+# 👥 MODULE STATISTIQUES PATIENTS (V2 - Codes 7301, 7311, 25.110)
+# ==========================================
+elif st.session_state.page == "stats_patients":
+    if st.sidebar.button("⬅️ Retour Accueil"):
+        st.session_state.page = "accueil"
+        st.rerun()
+
+    st.title("👥 Analyse de la fréquentation patients")
+    st.info("Cette analyse calcule le nombre de séances par patient sur la base des codes : **7301, 7311 et 25.110**.")
+    
+    uploaded_file = st.sidebar.file_uploader("📂 Déposer l'export Excel (Prestation)", type="xlsx", key="stats_p_up")
+
+    if uploaded_file:
+        try:
+            df = pd.read_excel(uploaded_file, sheet_name='Prestation')
+            
+            # --- CONFIGURATION DES COLONNES ---
+            col_tarif = df.columns[2]    # C: Tarif
+            col_patient = df.columns[8]  # I: Patient
+            col_fourn = df.columns[9]   # J: Fournisseur
+            col_montant = df.columns[11] # L: Montant
+            
+            # --- NETTOYAGE & FILTRAGE ---
+            # Conversion en string pour éviter les erreurs de type (7301 vs "7301")
+            df[col_tarif] = df[col_tarif].astype(str).str.strip()
+            codes_valides = ["7301", "7311", "25.110"]
+            
+            mask = (df[col_montant] > 0) & (df[col_tarif].isin(codes_valides))
+            df_seances = df[mask].copy()
+
+            if not df_seances.empty:
+                # --- FILTRE SIDEBAR ---
+                st.sidebar.header("🔍 Filtres")
+                liste_fourn = sorted(df_seances[col_fourn].dropna().unique().tolist())
+                sel_fourn = st.sidebar.multiselect("Filtrer par Thérapeute :", options=liste_fourn, default=liste_fourn)
+                
+                df_filtre = df_seances[df_seances[col_fourn].isin(sel_fourn)]
+
+                # --- CALCULS ---
+                # On groupe par patient pour compter le nombre de lignes (séances)
+                stats_par_patient = df_filtre.groupby(col_patient).size().reset_index(name='nb_seances')
+                
+                moyenne = stats_par_patient['nb_seances'].mean()
+                mediane = stats_par_patient['nb_seances'].median()
+                total_p = len(stats_par_patient)
+                
+                # --- AFFICHAGE ---
+                c1, c2, c3 = st.columns(3)
+                c1.metric("Moyenne séances/patient", f"{moyenne:.2f}")
+                c2.metric("Médiane (50%)", f"{int(mediane)} j")
+                c3.metric("Nombre de patients", total_p)
+
+                # Histogramme de répartition
+                fig = px.histogram(
+                    stats_par_patient, 
+                    x="nb_seances",
+                    title="Distribution du nombre de séances",
+                    labels={'nb_seances': 'Nombre de séances total par patient', 'count': 'Nb de Patients'},
+                    color_discrete_sequence=['#AB63FA']
+                )
+                fig.update_layout(bargap=0.1)
+                st.plotly_chart(fig, use_container_width=True)
+
+                # Tableau détaillé
+                with st.expander("Voir le détail par patient"):
+                    st.dataframe(
+                        stats_par_patient.sort_values('nb_seances', ascending=False),
+                        use_container_width=True,
+                        hide_index=True
+                    )
+            else:
+                st.warning("Aucune donnée trouvée pour les codes 7301, 7311 ou 25.110.")
+
+        except Exception as e:
+            st.error(f"Erreur lors de l'analyse : {e}")
 
 
