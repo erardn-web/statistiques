@@ -63,7 +63,7 @@ if st.session_state.page == "accueil":
     st.markdown("---")
     st.write("### Choisissez le module d'analyse souhaité :")
     
-    col1, col2, col3, col4, col5 = st.columns(4)
+    col1, col2, col3, col4, col5 = st.columns(5)
     with col1:
         st.info("📊 **MODULE FACTURATION - export des factures**")
         if st.button("Accéder à la Facturation", use_container_width=True):
@@ -589,6 +589,7 @@ elif st.session_state.page == "stats_patients":
 
         except Exception as e:
             st.error(f"Erreur lors de l'analyse : {e}")
+
 
 
 
