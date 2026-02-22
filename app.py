@@ -513,97 +513,116 @@ elif st.session_state.page == "bilan":
         except Exception as e:
             st.error(f"Erreur d'analyse : {e}")
 
+import streamlit as st
+import pandas as pd
+
 # ==========================================
-# 👥 MODULE : STATISTIQUES & FLUX PATIENTS (Version Optimisée)
+# 👥 MODULE : STATISTIQUES & FLUX PATIENTS
 # ==========================================
 def render_stats_patients():
+    # 1. BOUTON RETOUR
     if st.sidebar.button("⬅️ Retour Accueil"):
         st.session_state.page = "accueil"
         st.rerun()
 
     st.title("👥 Statistiques & Planification du Flux")
-    
-    uploaded_file = st.sidebar.file_uploader("📂 Déposer l'export Excel (Prestation)", type="xlsx", key="uploader_stats")
+    st.markdown("---")
 
-    if uploaded_file:
-        try:
-            # 1. CHARGEMENT INITIAL (Mis en cache pour éviter de relire le fichier à chaque clic)
-            @st.cache_data
-            def load_and_filter(file):
-                df = pd.read_excel(file, sheet_name='Prestation')
-                col_date = df.columns[0]
-                col_tarif = df.columns[2]
-                col_patient = df.columns[8]
-                col_montant = df.columns[11]
-                
-                df[col_tarif] = df[col_tarif].astype(str).str.strip()
-                df[col_date] = pd.to_datetime(df[col_date], errors='coerce')
-                
-                codes_valides = ["7301", "7311", "25.110"]
-                mask = (df[col_montant] > 0) & (df[col_tarif].isin(codes_valides))
-                return df[mask].copy(), col_patient
+    # 2. CHARGEMENT DU FICHIER (Sidebar)
+    uploaded_file = st.sidebar.file_uploader("📂 Déposer l'export Excel (Prestation)", type="xlsx", key="stats_up")
+
+    if not uploaded_file:
+        st.info("👋 Veuillez charger un fichier Excel dans la barre latérale pour activer le module.")
+        return
+
+    try:
+        # 3. LECTURE OPTIMISÉE (Utilisation du cache pour éviter la lenteur)
+        @st.cache_data
+        def load_data(file):
+            df = pd.read_excel(file, sheet_name='Prestation')
+            # Nettoyage des noms de colonnes
+            df.columns = [str(c).strip() for c in df.columns]
             
-            df_seances, col_patient = load_and_filter(uploaded_file)
+            # Identification des colonnes utiles
+            col_date = df.columns[0]
+            col_tarif = df.columns[2]
+            col_patient = df.columns[8]
+            col_montant = df.columns[11]
+            
+            # Filtre sur les codes spécifiques
+            df[col_tarif] = df[col_tarif].astype(str).str.strip()
+            codes = ["7301", "7311", "25.110"]
+            df_filtred = df[(df[col_montant] > 0) & (df[col_tarif].isin(codes))].copy()
+            return df_filtred, col_patient
 
-            if not df_seances.empty:
-                # Analyse rapide hors formulaire
-                stats_p = df_seances.groupby(col_patient).size().reset_index(name='nb_seances')
-                moyenne_obs = stats_p['nb_seances'].mean()
-                
-                # --- FORMULAIRE DE SAISIE ---
-                st.info("💡 Modifiez les paramètres ci-dessous et cliquez sur 'Lancer le calcul' pour voir les résultats.")
-                
-                with st.form("form_planification"):
-                    st.subheader("🏦 Configuration de l'Équipe")
-                    
-                    if 'capa_df' not in st.session_state:
-                        st.session_state.capa_df = pd.DataFrame([
-                            {"Thérapeute": "Thérapeute 1", "Places/Semaine": 40, "Semaines/an": 43},
-                            {"Thérapeute": "Thérapeute 2", "Places/Semaine": 40, "Semaines/an": 43},
-                            {"Thérapeute": "Thérapeute 3", "Places/Semaine": 20, "Semaines/an": 43},
-                        ])
+        df_seances, col_patient = load_data(uploaded_file)
 
-                    # Le tableau éditable à l'intérieur du formulaire
-                    edited_df = st.data_editor(st.session_state.capa_df, num_rows="dynamic", use_container_width=True)
-                    
-                    st.markdown("### ⚙️ Simulation")
-                    s1, s2, s3 = st.columns(3)
-                    with s1:
-                        duree_trait = st.number_input("Séances / traitement", value=float(round(moyenne_obs, 1)), step=0.5)
-                    with s2:
-                        intensite = st.slider("Fréquence (séances/sem)", 0.5, 3.0, 1.2, 0.1)
-                    with s3:
-                        jours_ouv = st.slider("Jours d'ouverture", 1, 6, 5)
+        if df_seances.empty:
+            st.warning("⚠️ Aucune donnée trouvée pour les codes 7301, 7311 ou 25.110.")
+            return
 
-                    # LE BOUTON MAGIQUE
-                    submitted = st.form_submit_button("🚀 Lancer le calcul", use_container_width=True, type="primary")
+        # 4. CALCULS PRÉALABLES
+        stats_p = df_seances.groupby(col_patient).size().reset_index(name='nb_seances')
+        moyenne_obs = stats_p['nb_seances'].mean()
 
-                if submitted:
-                    # Enregistrement des données dans le session_state pour qu'elles restent après soumission
-                    st.session_state.capa_df = edited_df
-                    
-                    # Calculs
-                    edited_df['Total_Annuel'] = edited_df['Places/Semaine'] * edited_df['Semaines/an']
-                    volume_annuel = edited_df['Total_Annuel'].sum()
-                    capa_lissee = volume_annuel / 52.14
-                    
-                    besoin_hebdo = (capa_lissee * intensite) / duree_trait
-                    besoin_jour = besoin_hebdo / jours_ouv
+        # 5. FORMULAIRE DE CONFIGURATION (Évite les relances à chaque modification)
+        st.subheader("⚙️ Paramètres de planification")
+        
+        with st.form("form_planning"):
+            st.write("**Équipe & Capacité (Semaines travaillées par an)**")
+            
+            # Initialisation du tableau par défaut
+            if 'capa_df' not in st.session_state:
+                st.session_state.capa_df = pd.DataFrame([
+                    {"Thérapeute": "Thérapeute 1", "Places/Semaine": 40, "Semaines/an": 43},
+                    {"Thérapeute": "Thérapeute 2", "Places/Semaine": 40, "Semaines/an": 43},
+                    {"Thérapeute": "Thérapeute 3", "Places/Semaine": 20, "Semaines/an": 43},
+                ])
 
-                    # --- RÉSULTATS ---
-                    st.markdown("---")
-                    st.success(f"### Objectif : **{besoin_jour:.1f}** nouveaux patients / jour")
-                    
-                    r1, r2, r3 = st.columns(3)
-                    r1.metric("Capacité moyenne", f"{capa_lissee:.1f} RDV/sem")
-                    r2.metric("Nouveaux patients/sem", f"{besoin_hebdo:.1f}")
-                    r3.metric("Nouveaux patients/mois", f"{int(besoin_hebdo * 4.34)}")
-                    
-                    st.balloons() # Optionnel : petite animation de succès
-            else:
-                st.warning("Aucun acte 7301, 7311 ou 25.110 trouvé.")
+            # Édition du tableau des thérapeutes
+            edited_df = st.data_editor(st.session_state.capa_df, num_rows="dynamic", use_container_width=True)
+            
+            st.markdown("---")
+            col_s1, col_s2, col_s3 = st.columns(3)
+            with col_s1:
+                val_moyenne = st.number_input("Séances / traitement", value=float(round(moyenne_obs, 1)), step=0.5)
+            with col_s2:
+                intensite = st.slider("Rythme (séances/semaine)", 0.5, 3.0, 1.2, 0.1)
+            with col_s3:
+                jours_ouvrables = st.slider("Jours d'ouverture / sem", 1, 6, 5)
 
-        except Exception as e:
-            st.error(f"Erreur : {e}")
-    else:
-        st.info("Veuillez charger un export Excel pour commencer.")
+            # BOUTON DE VALIDATION (Indispensable pour bloquer les calculs en boucle)
+            submit = st.form_submit_button("🚀 LANCER LE CALCUL", use_container_width=True, type="primary")
+
+        # 6. RÉSULTATS (Affichés uniquement après clic)
+        if submit:
+            st.session_state.capa_df = edited_df # Sauvegarde pour le prochain affichage
+            
+            # Calcul de la capacité réelle lissée sur l'année
+            edited_df['Capa_Annuelle'] = edited_df['Places/Semaine'] * edited_df['Semaines/an']
+            total_annuel = edited_df['Capa_Annuelle'].sum()
+            capa_hebdo_lissee = total_annuel / 52.14
+            
+            # Calcul du flux nécessaire
+            besoin_hebdo = (capa_hebdo_lissee * intensite) / val_moyenne
+            besoin_jour = besoin_hebdo / jours_ouvrables
+
+            st.markdown("---")
+            st.success(f"### Objectif : **{besoin_jour:.1f}** nouveaux patients / jour")
+            
+            r1, r2, r3 = st.columns(3)
+            r1.metric("Capacité Réelle (Moyenne)", f"{capa_hebdo_lissee:.1f} RDV/sem")
+            r2.metric("Nouveaux patients / sem", f"{besoin_hebdo:.1f}")
+            r3.metric("Nouveaux patients / mois", f"{int(besoin_hebdo * 4.34)}")
+            
+            st.info(f"Ce calcul prend en compte que votre équipe effectue un total de **{int(total_annuel)}** séances par an.")
+
+    except Exception as e:
+        st.error(f"Une erreur est survenue : {e}")
+
+# --- LOGIQUE DE NAVIGATION (À placer en fin de fichier principal) ---
+if 'page' not in st.session_state:
+    st.session_state.page = "accueil"
+
+if st.session_state.page == "stats_patients":
+    render_stats_patients()
