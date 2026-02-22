@@ -514,82 +514,124 @@ elif st.session_state.page == "bilan":
             st.error(f"Erreur d'analyse : {e}")
 
 # ==========================================
-# 👥 MODULE STATISTIQUES PATIENTS (V2 - Codes 7301, 7311, 25.110)
+# 👥 MODULE STATISTIQUES & PLANIFICATION FLUX
 # ==========================================
-elif st.session_state.page == "stats_patients":
+def render_stats_patients():
     if st.sidebar.button("⬅️ Retour Accueil"):
         st.session_state.page = "accueil"
         st.rerun()
 
-    st.title("👥 Analyse de la fréquentation patients")
-    st.info("Cette analyse calcule le nombre de séances par patient sur la base des codes : **7301, 7311 et 25.110**.")
+    st.title("👥 Statistiques Patients & Planification du Flux")
+    st.info("""
+        Ce module calcule la durée moyenne des traitements (7301, 7311, 25.110) 
+        et détermine le nombre de nouveaux patients nécessaires pour remplir vos agendas.
+    """)
     
     uploaded_file = st.sidebar.file_uploader("📂 Déposer l'export Excel (Prestation)", type="xlsx", key="stats_p_up")
 
     if uploaded_file:
         try:
+            # 1. CHARGEMENT ET NETTOYAGE
             df = pd.read_excel(uploaded_file, sheet_name='Prestation')
             
-            # --- CONFIGURATION DES COLONNES ---
             col_tarif = df.columns[2]    # C: Tarif
             col_patient = df.columns[8]  # I: Patient
             col_fourn = df.columns[9]   # J: Fournisseur
             col_montant = df.columns[11] # L: Montant
-            
-            # --- NETTOYAGE & FILTRAGE ---
-            # Conversion en string pour éviter les erreurs de type (7301 vs "7301")
+            col_date = df.columns[0]    # A: Date de séance
+
+            # Conversion types
             df[col_tarif] = df[col_tarif].astype(str).str.strip()
-            codes_valides = ["7301", "7311", "25.110"]
+            df[col_date] = pd.to_datetime(df[col_date], errors='coerce')
             
+            # Filtre strict : Montant > 0 et Codes spécifiques
+            codes_valides = ["7301", "7311", "25.110"]
             mask = (df[col_montant] > 0) & (df[col_tarif].isin(codes_valides))
             df_seances = df[mask].copy()
 
             if not df_seances.empty:
-                # --- FILTRE SIDEBAR ---
-                st.sidebar.header("🔍 Filtres")
-                liste_fourn = sorted(df_seances[col_fourn].dropna().unique().tolist())
-                sel_fourn = st.sidebar.multiselect("Filtrer par Thérapeute :", options=liste_fourn, default=liste_fourn)
+                # --- SECTION 1 : ANALYSE DES DONNÉES HISTORIQUES ---
+                st.subheader("📊 Analyse des traitements terminés")
                 
-                df_filtre = df_seances[df_seances[col_fourn].isin(sel_fourn)]
+                # Groupement par patient
+                stats_par_patient = df_seances.groupby(col_patient).size().reset_index(name='nb_seances')
+                moyenne_calculee = stats_par_patient['nb_seances'].mean()
+                mediane_calculee = stats_par_patient['nb_seances'].median()
 
-                # --- CALCULS ---
-                # On groupe par patient pour compter le nombre de lignes (séances)
-                stats_par_patient = df_filtre.groupby(col_patient).size().reset_index(name='nb_seances')
-                
-                moyenne = stats_par_patient['nb_seances'].mean()
-                mediane = stats_par_patient['nb_seances'].median()
-                total_p = len(stats_par_patient)
-                
-                # --- AFFICHAGE ---
                 c1, c2, c3 = st.columns(3)
-                c1.metric("Moyenne séances/patient", f"{moyenne:.2f}")
-                c2.metric("Médiane (50%)", f"{int(mediane)} j")
-                c3.metric("Nombre de patients", total_p)
+                c1.metric("Moyenne observée", f"{moyenne_calculee:.1f} séanc.")
+                c2.metric("Médiane observée", f"{int(mediane_calculee)} séanc.")
+                c3.metric("Total Patients Unique", len(stats_par_patient))
 
-                # Histogramme de répartition
-                fig = px.histogram(
-                    stats_par_patient, 
-                    x="nb_seances",
-                    title="Distribution du nombre de séances",
-                    labels={'nb_seances': 'Nombre de séances total par patient', 'count': 'Nb de Patients'},
-                    color_discrete_sequence=['#AB63FA']
-                )
-                fig.update_layout(bargap=0.1)
+                with st.expander("💡 Pourquoi ces chiffres ?"):
+                    st.write("""
+                        Cette moyenne inclut tous les patients de l'export. 
+                        Notez que les patients ayant commencé avant l'export ou encore en traitement 
+                        peuvent légèrement influencer ce chiffre. Utilisez la médiane pour une vision plus stable.
+                    """)
+
+                # --- SECTION 2 : PLANIFICATION DE CAPACITÉ ---
+                st.markdown("---")
+                st.subheader("🏦 Calculateur de Flux (Objectif Remplissage)")
+                
+                col_left, col_right = st.columns([1, 1])
+
+                with col_left:
+                    st.write("**1. Capacité de l'équipe**")
+                    # Tableau éditable pour définir les places
+                    if 'capa_df' not in st.session_state:
+                        st.session_state.capa_df = pd.DataFrame([
+                            {"Thérapeute": "Thérapeute A", "Places/Semaine": 40},
+                            {"Thérapeute": "Thérapeute B", "Places/Semaine": 40},
+                            {"Thérapeute": "Thérapeute C", "Places/Semaine": 20},
+                        ])
+                    
+                    edited_capa = st.data_editor(st.session_state.capa_df, num_rows="dynamic", use_container_width=True)
+                    
+                    total_theorique = edited_capa["Places/Semaine"].sum()
+                    # Lissage sur 43 semaines
+                    capa_lissee = total_theorique * (43 / 52.14)
+                
+                with col_right:
+                    st.write("**2. Paramètres Métier**")
+                    # L'utilisateur peut ajuster la moyenne s'il sait qu'elle est biaisée
+                    val_moyenne = st.number_input("Séances moyennes par traitement", value=float(round(moyenne_calculee, 1)), step=0.5)
+                    intensite = st.slider("Rythme (séances / semaine / patient)", 0.5, 3.0, 1.2, 0.1)
+                    jours_ouvres = st.number_input("Jours d'ouverture du cabinet / semaine", value=5, min_value=1)
+
+                # --- CALCUL FINAL DU FLUX ---
+                # Formule : (Capacité Lissée * Intensité) / Nombre de séances par traitement
+                nouveaux_p_hebdo = (capa_lissee * intensite) / val_moyenne
+                nouveaux_p_jour = nouveaux_p_hebdo / jours_ouvres
+
+                st.markdown("---")
+                st.success(f"### Cible de recrutement : **{nouveaux_p_jour:.1f}** nouveaux patients / jour")
+                
+                res1, res2, res3 = st.columns(3)
+                res1.metric("Capacité moyenne réelle", f"{capa_lissee:.1f} RDV/sem.", help="Lissée sur 43 semaines de travail")
+                res2.metric("Besoin hebdomadaire", f"{nouveaux_p_hebdo:.1f} pat.")
+                res3.metric("Besoin mensuel", f"{int(nouveaux_p_hebdo * 4.34)} pat.")
+
+                st.warning(f"""
+                    **Interprétation :** Pour maintenir vos agendas pleins ({total_theorique} places théoriques lissées à 43 semaines), 
+                    il vous faut intégrer **{nouveaux_p_hebdo:.1f}** nouveaux patients par semaine, car chaque patient 
+                    libère sa place après **{val_moyenne}** séances.
+                """)
+
+                # --- GRAPHIQUE DE RÉPARTITION ---
+                st.subheader("📊 Distribution du volume par patient")
+                fig = px.histogram(stats_par_patient, x="nb_seances", nbins=20, 
+                                   title="Nombre de patients par tranche de séances",
+                                   labels={'nb_seances': 'Nombre de séances', 'count': 'Nombre de patients'},
+                                   color_discrete_sequence=['#00CCFF'])
                 st.plotly_chart(fig, use_container_width=True)
 
-                # Tableau détaillé
-                with st.expander("Voir le détail par patient"):
-                    st.dataframe(
-                        stats_par_patient.sort_values('nb_seances', ascending=False),
-                        use_container_width=True,
-                        hide_index=True
-                    )
             else:
                 st.warning("Aucune donnée trouvée pour les codes 7301, 7311 ou 25.110.")
 
         except Exception as e:
-            st.error(f"Erreur lors de l'analyse : {e}")
+            st.error(f"Erreur d'analyse : {e}")
 
-
-
-
+# Intégration dans votre logique de pages exist
+if st.session_state.page == "stats_patients":
+    render_stats_patients()
