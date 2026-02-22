@@ -517,135 +517,129 @@ import streamlit as st
 import pandas as pd
 
 # ==========================================
-# 👥 MODULE : STATISTIQUES & FLUX PATIENTS
+# 👥 MODULE : STATISTIQUES & FLUX MULTI-CABINETS
 # ==========================================
 def render_stats_patients():
-    # 1. BARRE LATÉRALE : RETOUR ET IMPORT
     if st.sidebar.button("⬅️ Retour Accueil"):
         st.session_state.page = "accueil"
         st.rerun()
 
     st.sidebar.markdown("---")
-    uploaded_file = st.sidebar.file_uploader("📂 Déposer l'export Excel (Prestation)", type="xlsx", key="stats_v_final")
+    uploaded_file = st.sidebar.file_uploader("📂 Déposer l'export Excel (Prestation)", type="xlsx", key="stats_multi_cab")
 
-    # Titre principal
-    st.title("👥 Statistiques & Planification du Flux")
+    st.title("👥 Planification du Flux Multi-Cabinets")
 
-    # Sécurité : Si aucun fichier n'est chargé
     if not uploaded_file:
-        st.info("👋 Veuillez charger votre export Excel dans la barre latérale pour commencer l'analyse.")
-        st.markdown("""
-        ### Comment utiliser ce module ?
-        1. **Importez** votre fichier Excel 'Prestation'.
-        2. **Configurez** votre équipe dans le tableau (places disponibles et semaines travaillées).
-        3. **Ajustez** vos objectifs (taux d'occupation, fréquence des séances).
-        4. **Lancez le calcul** pour connaître votre besoin en nouveaux patients.
-        """)
+        st.info("👋 Chargez un fichier Excel pour simuler les besoins de vos deux cabinets.")
         return
 
     try:
-        # 2. LECTURE DES DONNÉES (Mise en cache pour la fluidité)
         @st.cache_data
         def process_data(file):
             df = pd.read_excel(file, sheet_name='Prestation')
-            # Nettoyage des colonnes
             df.columns = [str(c).strip() for c in df.columns]
-            col_date, col_tarif, col_patient, col_montant = df.columns[0], df.columns[2], df.columns[8], df.columns[11]
-            
+            col_tarif, col_patient, col_montant = df.columns[2], df.columns[8], df.columns[11]
             df[col_tarif] = df[col_tarif].astype(str).str.strip()
             codes = ["7301", "7311", "25.110"]
             df_filtred = df[(df[col_montant] > 0) & (df[col_tarif].isin(codes))].copy()
             return df_filtred, col_patient
 
         df_seances, col_patient = process_data(uploaded_file)
-
-        if df_seances.empty:
-            st.warning("⚠️ Aucune donnée trouvée pour les codes 7301, 7311 ou 25.110.")
-            return
-
-        # 3. CALCUL DE LA MOYENNE HISTORIQUE
         stats_p = df_seances.groupby(col_patient).size().reset_index(name='nb_seances')
         moyenne_obs = stats_p['nb_seances'].mean()
 
-        # 4. FORMULAIRE DE CONFIGURATION (Bloque le rechargement automatique)
-        with st.form("form_planification_equipe"):
-            st.subheader("⚙️ Configuration de l'Équipe (12 Thérapeutes)")
+        with st.form("form_multi_cab"):
+            st.subheader("🏢 Répartition de l'Équipe")
             
-            # Initialisation du tableau avec 12 lignes et 43 semaines par défaut
+            # Initialisation avec colonne "Cabinet"
             if 'capa_df' not in st.session_state:
                 data_init = []
                 for i in range(1, 13):
                     data_init.append({
                         "Thérapeute": f"Thérapeute {i}", 
-                        "Places/Sem": 40 if i <= 3 else 0, # 3 actifs par défaut
+                        "Cabinet": "Cabinet A" if i <= 6 else "Cabinet B",
+                        "Places/Sem": 40 if i <= 2 else 0, 
                         "Semaines/an": 43
                     })
                 st.session_state.capa_df = pd.DataFrame(data_init)
             
-            # Tableau éditable
-            edited_df = st.data_editor(st.session_state.capa_df, num_rows="dynamic", use_container_width=True)
+            # Configuration de l'éditeur pour avoir une liste déroulante sur le Cabinet
+            column_config = {
+                "Cabinet": st.column_config.SelectboxColumn(
+                    "Cabinet",
+                    options=["Cabinet A", "Cabinet B"],
+                    required=True,
+                )
+            }
+
+            edited_df = st.data_editor(
+                st.session_state.capa_df, 
+                column_config=column_config,
+                num_rows="dynamic", 
+                use_container_width=True
+            )
             
             st.markdown("---")
-            st.subheader("🎯 Objectifs de Remplissage")
+            st.subheader("🎯 Paramètres Globaux")
             c1, c2 = st.columns(2)
-            
             with c1:
                 val_moyenne = st.number_input("Séances moyennes / traitement", value=float(round(moyenne_obs, 1)), step=0.5)
-                intensite = st.slider("Fréquence (séances / semaine / patient)", 0.5, 3.0, 1.2, 0.1)
-            
+                intensite = st.slider("Fréquence (séances/sem/patient)", 0.5, 3.0, 1.2, 0.1)
             with c2:
                 target_occup = st.slider("Taux d'occupation visé (%)", 50, 100, 85, 5)
-                jours_ouvrables = st.slider("Jours d'ouverture du cabinet / semaine", 1, 6, 5)
+                jours_ouvrables = st.slider("Jours d'ouverture / semaine", 1, 6, 5)
 
-            # Bouton de validation
-            submit = st.form_submit_button("🚀 LANCER LE CALCUL", use_container_width=True, type="primary")
+            submit = st.form_submit_button("🚀 CALCULER LES FLUX PAR CABINET", use_container_width=True, type="primary")
 
-        # 5. AFFICHAGE DES RÉSULTATS (Après soumission)
         if submit:
             st.session_state.capa_df = edited_df
             
-            # Calcul de la capacité réelle lissée
-            # On ne calcule que pour les lignes où Places/Sem > 0
-            df_actifs = edited_df[edited_df['Places/Sem'] > 0].copy()
-            
-            total_annuel_theorique = (df_actifs['Places/Sem'] * df_actifs['Semaines/an']).sum()
-            total_annuel_cible = total_annuel_theorique * (target_occup / 100)
-            capa_hebdo_lissee = total_annuel_cible / 52.14
-            
-            # Calcul du flux nécessaire
-            # Formule : (Capacité Hebdo Cible * Intensité) / Nombre de séances du traitement
-            besoin_hebdo = (capa_hebdo_lissee * intensite) / val_moyenne
-            besoin_jour = besoin_hebdo / jours_ouvrables
+            # --- FONCTION DE CALCUL ---
+            def calculer_besoin(df_filtre):
+                total_annuel = (df_filtre['Places/Sem'] * df_filtre['Semaines/an']).sum()
+                capa_hebdo = (total_annuel * (target_occup / 100)) / 52.14
+                besoin_hebdo = (capa_hebdo * intensite) / val_moyenne
+                return capa_hebdo, besoin_hebdo
 
+            # Calculs par groupe
+            df_actifs = edited_df[edited_df['Places/Sem'] > 0]
+            
+            # Global
+            capa_g, flux_g = calculer_besoin(df_actifs)
+            # Cabinet A
+            capa_a, flux_a = calculer_besoin(df_actifs[df_actifs['Cabinet'] == "Cabinet A"])
+            # Cabinet B
+            capa_b, flux_b = calculer_besoin(df_actifs[df_actifs['Cabinet'] == "Cabinet B"])
+
+            # --- AFFICHAGE ---
             st.markdown("---")
-            st.success(f"### Objectif : **{besoin_jour:.1f}** nouveaux patients / jour")
-            
-            res1, res2, res3 = st.columns(3)
-            res1.metric("Capacité Cible", f"{capa_hebdo_lissee:.1f} RDV/sem", help=f"Basé sur {target_occup}% d'occupation réelle.")
-            res2.metric("Nouveaux / sem", f"{besoin_hebdo:.1f}")
-            res3.metric("Nouveaux / mois", f"{int(besoin_hebdo * 4.34)}")
+            st.header("📍 Résultats par Cabinet")
 
-            # SECTION PÉDAGOGIQUE
-            st.subheader("📖 Interprétation du modèle")
-            exp1, exp2 = st.columns(2)
-            
-            with exp1:
-                st.write("**Capacité de l'équipe :**")
-                st.write(f"En tenant compte des vacances, votre équipe produit **{int(total_annuel_theorique)}** créneaux par an. Pour rester serein, votre objectif est d'en remplir **{int(total_annuel_cible)}**.")
-            
-            with exp2:
-                duree_traitement_sem = val_moyenne / intensite
-                st.write("**Flux Patient :**")
-                st.write(f"Un patient reste chez vous environ **{duree_traitement_sem:.1f} semaines**. Pour maintenir vos agendas, vous devez remplacer chaque départ par une nouvelle entrée.")
+            tab1, tab2, tab3 = st.tabs(["📊 Global", "🏠 Cabinet A", "🏠 Cabinet B"])
+
+            with tab1:
+                st.success(f"### Besoin Total : **{(flux_g/jours_ouvrables):.1f}** nouveaux patients / jour")
+                col1, col2, col3 = st.columns(3)
+                col1.metric("Capacité Totale", f"{capa_g:.1f} RDV/sem")
+                col2.metric("Nouveaux / sem", f"{flux_g:.1f}")
+                col3.metric("Nouveaux / mois", f"{int(flux_g * 4.34)}")
+
+            with tab2:
+                st.info(f"### Besoin A : **{(flux_a/jours_ouvrables):.1f}** nouveaux patients / jour")
+                col1, col2, col3 = st.columns(3)
+                col1.metric("Capacité A", f"{capa_a:.1f} RDV/sem")
+                col2.metric("Nouveaux / sem", f"{flux_a:.1f}")
+                col3.metric("Nouveaux / mois", f"{int(flux_a * 4.34)}")
+
+            with tab3:
+                st.warning(f"### Besoin B : **{(flux_b/jours_ouvrables):.1f}** nouveaux patients / jour")
+                col1, col2, col3 = st.columns(3)
+                col1.metric("Capacité B", f"{capa_b:.1f} RDV/sem")
+                col2.metric("Nouveaux / sem", f"{flux_b:.1f}")
+                col3.metric("Nouveaux / mois", f"{int(flux_b * 4.34)}")
+
+            st.subheader("📖 Interprétation")
+            st.write(f"Pour maintenir un taux d'occupation de **{target_occup}%** sur l'ensemble des deux structures, vous devez intégrer **{int(flux_g * 4.34)}** nouveaux patients par mois, répartis selon la capacité de chaque site.")
 
     except Exception as e:
-        st.error(f"❌ Une erreur est survenue lors de l'analyse : {e}")
-
-# ==========================================
-# LOGIQUE DE NAVIGATION (Tout en bas du fichier)
-# ==========================================
-if 'page' not in st.session_state:
-    st.session_state.page = "accueil"
-
-if st.session_state.page == "stats_patients":
-    render_stats_patients()
+        st.error(f"❌ Erreur : {e}")
