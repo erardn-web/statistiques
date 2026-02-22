@@ -513,16 +513,20 @@ elif st.session_state.page == "bilan":
         except Exception as e:
             st.error(f"Erreur d'analyse : {e}")
 
+import streamlit as st
+import pandas as pd
+from datetime import datetime, timedelta
+
 # ==========================================
-# 👥 MODULE : PILOTAGE FLUX (V11 - Correctif)
+# 👥 MODULE : PILOTAGE FLUX (V11.1 - Final Fix)
 # ==========================================
 def render_stats_patients():
-    if st.sidebar.button("⬅️ Retour Accueil", key="btn_back_v11"):
+    if st.sidebar.button("⬅️ Retour Accueil", key="btn_back_final"):
         st.session_state.page = "accueil"
         st.rerun()
 
     st.sidebar.markdown("---")
-    uploaded_file = st.sidebar.file_uploader("📂 Déposer l'export Excel", type="xlsx", key="uploader_v11")
+    uploaded_file = st.sidebar.file_uploader("📂 Déposer l'export Excel", type="xlsx", key="uploader_v11_1")
 
     st.title("👥 Pilotage du Flux Patients")
 
@@ -554,12 +558,12 @@ def render_stats_patients():
             p_suivis = p_stats[p_stats['jours_vie'] >= 7]
             rythme = p_suivis['nb_seances'].sum() / (p_suivis['jours_vie'].sum() / 7) if not p_suivis.empty else 1.1
 
-            # --- 2. CALCUL DU FLUX RÉEL (Correction du décompte) ---
+            # --- 2. CALCUL DU FLUX RÉEL ---
             derniere_date = df_f[c_date].max()
             
             def stats_periode(jours):
                 seuil = derniere_date - timedelta(days=jours)
-                # On compte uniquement ceux dont la PREMIÈRE séance est après le seuil
+                # Un patient est "nouveau" si sa toute première séance est dans la zone
                 nouveaux = p_stats[p_stats['date_min'] >= seuil]
                 count = len(nouveaux)
                 jours_ouvres = (jours / 7) * 5
@@ -584,8 +588,8 @@ def render_stats_patients():
         c_r3.metric("Derniers 120j", f"{data['flux_120'][0]} pat.", f"{data['flux_120'][1]:.1f} / jour")
 
         # --- FORMULAIRE CONFIGURATION ---
-        with st.form("form_v11"):
-            st.subheader("⚙️ Simulation des besoins (A & B)")
+        with st.form("form_v11_1"):
+            st.subheader("⚙️ Simulation des besoins (Cabinets A & B)")
             if 'capa_df' not in st.session_state:
                 st.session_state.capa_df = pd.DataFrame([
                     {"Thérapeute": f"Thérapeute {i}", "Cabinet": "A" if i <= 6 else "B", 
@@ -615,20 +619,18 @@ def render_stats_patients():
                 return capa_h, flux_h
 
             df_act = edited_df[edited_df['Places/Sem'] > 0]
-            
-            # Calculs ventilés
             c_tot, f_tot = calc_needs(df_act)
             c_a, f_a = calc_needs(df_act[df_act['Cabinet'] == "A"])
             c_b, f_b = calc_needs(df_act[df_act['Cabinet'] == "B"])
 
             st.markdown("---")
-            t_all, t_a, t_b = st.tabs(["📊 TOTAL", "🏠 CABINET A", "🏠 CABINET B"])
+            t_all, t_a, t_b = st.tabs(["📊 TOTAL GLOBAL", "🏠 CABINET A", "🏠 CABINET B"])
 
             with t_all:
-                st.success(f"### Besoin Total : **{(f_tot/in_jours):.1f}** nouveaux / jour")
-                # Comparaison (basée sur 60j)
-                diff = data['flux_60'][1] - (f_tot/in_jours)
-                st.metric("Équilibre (Réel vs Théorique)", f"{data['flux_60'][1]:.1f} / jour", delta=round(diff, 1))
+                besoin_j = f_tot / in_jours
+                st.success(f"### Besoin Total : **{besoin_j:.1f}** nouveaux / jour")
+                diff = data['flux_60'][1] - besoin_j
+                st.metric("Équilibre (Réel 60j vs Théorique)", f"{data['flux_60'][1]:.1f} / jour", delta=round(diff, 1))
 
             with t_a:
                 st.info(f"### Besoin A : **{(f_a/in_jours):.1f}** nouveaux / jour")
@@ -641,5 +643,6 @@ def render_stats_patients():
     except Exception as e:
         st.error(f"❌ Erreur : {e}")
 
+# --- APPEL ---
 if 'page' not in st.session_state: st.session_state.page = "accueil"
 if st.session_state.page == "stats_patients": render_stats_patients()
