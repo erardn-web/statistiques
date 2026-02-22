@@ -513,33 +513,45 @@ elif st.session_state.page == "bilan":
         except Exception as e:
             st.error(f"Erreur d'analyse : {e}")
 
+import streamlit as st
+import pandas as pd
+
 # ==========================================
-# 👥 MODULE : STATISTIQUES & FLUX PATIENTS (V7 - 12 Thérapeutes)
+# 👥 MODULE : STATISTIQUES & FLUX PATIENTS
 # ==========================================
 def render_stats_patients():
-    # 1. Barre latérale : Retour et Upload
+    # 1. BARRE LATÉRALE : RETOUR ET IMPORT
     if st.sidebar.button("⬅️ Retour Accueil"):
         st.session_state.page = "accueil"
         st.rerun()
 
     st.sidebar.markdown("---")
-    uploaded_file = st.sidebar.file_uploader("📂 Déposer l'export Excel (Prestation)", type="xlsx", key="stats_v7_up")
+    uploaded_file = st.sidebar.file_uploader("📂 Déposer l'export Excel (Prestation)", type="xlsx", key="stats_v_final")
 
     # Titre principal
     st.title("👥 Statistiques & Planification du Flux")
 
-    # Sécurité : Si pas de fichier
+    # Sécurité : Si aucun fichier n'est chargé
     if not uploaded_file:
-        st.info("👋 Veuillez charger votre export Excel dans la barre latérale pour commencer.")
+        st.info("👋 Veuillez charger votre export Excel dans la barre latérale pour commencer l'analyse.")
+        st.markdown("""
+        ### Comment utiliser ce module ?
+        1. **Importez** votre fichier Excel 'Prestation'.
+        2. **Configurez** votre équipe dans le tableau (places disponibles et semaines travaillées).
+        3. **Ajustez** vos objectifs (taux d'occupation, fréquence des séances).
+        4. **Lancez le calcul** pour connaître votre besoin en nouveaux patients.
+        """)
         return
 
     try:
-        # 2. Lecture et Cache des données
+        # 2. LECTURE DES DONNÉES (Mise en cache pour la fluidité)
         @st.cache_data
         def process_data(file):
             df = pd.read_excel(file, sheet_name='Prestation')
+            # Nettoyage des colonnes
             df.columns = [str(c).strip() for c in df.columns]
             col_date, col_tarif, col_patient, col_montant = df.columns[0], df.columns[2], df.columns[8], df.columns[11]
+            
             df[col_tarif] = df[col_tarif].astype(str).str.strip()
             codes = ["7301", "7311", "25.110"]
             df_filtred = df[(df[col_montant] > 0) & (df[col_tarif].isin(codes))].copy()
@@ -551,91 +563,89 @@ def render_stats_patients():
             st.warning("⚠️ Aucune donnée trouvée pour les codes 7301, 7311 ou 25.110.")
             return
 
-        # 3. Calcul de la moyenne historique
+        # 3. CALCUL DE LA MOYENNE HISTORIQUE
         stats_p = df_seances.groupby(col_patient).size().reset_index(name='nb_seances')
         moyenne_obs = stats_p['nb_seances'].mean()
 
-        # 4. FORMULAIRE DE CONFIGURATION
-        with st.form("form_master_plan_v7"):
-            st.subheader("⚙️ Paramètres de l'Équipe (Cible : 12 Thérapeutes)")
+        # 4. FORMULAIRE DE CONFIGURATION (Bloque le rechargement automatique)
+        with st.form("form_planification_equipe"):
+            st.subheader("⚙️ Configuration de l'Équipe (12 Thérapeutes)")
             
-            # --- PRÉCONFIGURATION DES 12 THÉRAPEUTES ---
+            # Initialisation du tableau avec 12 lignes et 43 semaines par défaut
             if 'capa_df' not in st.session_state:
                 data_init = []
                 for i in range(1, 13):
                     data_init.append({
                         "Thérapeute": f"Thérapeute {i}", 
-                        "Places/Sem": 40 if i <= 3 else 0, # Ex: 3 actifs par défaut, les autres à 0
+                        "Places/Sem": 40 if i <= 3 else 0, # 3 actifs par défaut
                         "Semaines/an": 43
                     })
                 st.session_state.capa_df = pd.DataFrame(data_init)
             
-            # Affichage du tableau éditable
-            edited_df = st.data_editor(
-                st.session_state.capa_df, 
-                num_rows="dynamic", 
-                use_container_width=True
-            )
+            # Tableau éditable
+            edited_df = st.data_editor(st.session_state.capa_df, num_rows="dynamic", use_container_width=True)
             
             st.markdown("---")
+            st.subheader("🎯 Objectifs de Remplissage")
             c1, c2 = st.columns(2)
+            
             with c1:
-                val_moyenne = st.number_input("Séances moyennes par traitement (calculé)", value=float(round(moyenne_obs, 1)), step=0.5)
+                val_moyenne = st.number_input("Séances moyennes / traitement", value=float(round(moyenne_obs, 1)), step=0.5)
                 intensite = st.slider("Fréquence (séances / semaine / patient)", 0.5, 3.0, 1.2, 0.1)
+            
             with c2:
                 target_occup = st.slider("Taux d'occupation visé (%)", 50, 100, 85, 5)
-                jours_ouvrables = st.slider("Jours d'ouverture / semaine", 1, 6, 5)
+                jours_ouvrables = st.slider("Jours d'ouverture du cabinet / semaine", 1, 6, 5)
 
+            # Bouton de validation
             submit = st.form_submit_button("🚀 LANCER LE CALCUL", use_container_width=True, type="primary")
 
-        # 5. RESULTATS
+        # 5. AFFICHAGE DES RÉSULTATS (Après soumission)
         if submit:
             st.session_state.capa_df = edited_df
             
-            # Calculs : On ne prend que les thérapeutes ayant au moins 1 place/semaine
+            # Calcul de la capacité réelle lissée
+            # On ne calcule que pour les lignes où Places/Sem > 0
             df_actifs = edited_df[edited_df['Places/Sem'] > 0].copy()
             
             total_annuel_theorique = (df_actifs['Places/Sem'] * df_actifs['Semaines/an']).sum()
             total_annuel_cible = total_annuel_theorique * (target_occup / 100)
             capa_hebdo_lissee = total_annuel_cible / 52.14
             
+            # Calcul du flux nécessaire
+            # Formule : (Capacité Hebdo Cible * Intensité) / Nombre de séances du traitement
             besoin_hebdo = (capa_hebdo_lissee * intensite) / val_moyenne
             besoin_jour = besoin_hebdo / jours_ouvrables
 
             st.markdown("---")
             st.success(f"### Objectif : **{besoin_jour:.1f}** nouveaux patients / jour")
             
-            r1, r2, r3 = st.columns(3)
-            r1.metric("Places réelles / sem (Moyenne)", f"{capa_hebdo_lissee:.1f}")
-            r2.metric("Nouveaux patients / sem", f"{besoin_hebdo:.1f}")
-            r3.metric("Nouveaux patients / mois", f"{int(besoin_hebdo * 4.34)}")
+            res1, res2, res3 = st.columns(3)
+            res1.metric("Capacité Cible", f"{capa_hebdo_lissee:.1f} RDV/sem", help=f"Basé sur {target_occup}% d'occupation réelle.")
+            res2.metric("Nouveaux / sem", f"{besoin_hebdo:.1f}")
+            res3.metric("Nouveaux / mois", f"{int(besoin_hebdo * 4.34)}")
 
-            # --- EXPLICATION ---
-            st.subheader("📖 Interprétation")
+            # SECTION PÉDAGOGIQUE
+            st.subheader("📖 Interprétation du modèle")
             exp1, exp2 = st.columns(2)
+            
             with exp1:
-                st.write("**Capacité de production :**")
-                st.write(f"Avec {len(df_actifs)} thérapeutes actifs, votre cabinet vise un volume annuel de **{int(total_annuel_cible)}** séances.")
+                st.write("**Capacité de l'équipe :**")
+                st.write(f"En tenant compte des vacances, votre équipe produit **{int(total_annuel_theorique)}** créneaux par an. Pour rester serein, votre objectif est d'en remplir **{int(total_annuel_cible)}**.")
+            
             with exp2:
                 duree_traitement_sem = val_moyenne / intensite
-                st.write("**Flux de renouvellement :**")
-                st.write(f"Le traitement moyen durant **{duree_traitement_sem:.1f} semaines**, il faut ce volume d'entrées pour compenser les fins de prises en charge.")
+                st.write("**Flux Patient :**")
+                st.write(f"Un patient reste chez vous environ **{duree_traitement_sem:.1f} semaines**. Pour maintenir vos agendas, vous devez remplacer chaque départ par une nouvelle entrée.")
 
     except Exception as e:
-        st.error(f"❌ Erreur : {e}")
+        st.error(f"❌ Une erreur est survenue lors de l'analyse : {e}")
 
-# Appel de la fonction
+# ==========================================
+# LOGIQUE DE NAVIGATION (Tout en bas du fichier)
+# ==========================================
 if 'page' not in st.session_state:
     st.session_state.page = "accueil"
 
 if st.session_state.page == "stats_patients":
-    # --- LOGIQUE DE NAVIGATION ---
-if 'page' not in st.session_state:
-    st.session_state.page = "accueil"
-
-if st.session_state.page == "accueil":
-    render_accueil()  # Votre fonction de page d'accueil
-
-elif st.session_state.page == "stats_patients":
-    render_stats_patients()  # <-- Cette ligne doit être décalée par rapport au "elif"
-
+    render_stats_patients()
