@@ -514,124 +514,91 @@ elif st.session_state.page == "bilan":
             st.error(f"Erreur d'analyse : {e}")
 
 # ==========================================
-# 👥 MODULE STATISTIQUES & PLANIFICATION FLUX
+# 👥 MODULE STATISTIQUES & PLANIFICATION FLUX (V4 - Individualisée)
 # ==========================================
 def render_stats_patients():
     if st.sidebar.button("⬅️ Retour Accueil"):
         st.session_state.page = "accueil"
         st.rerun()
 
-    st.title("👥 Statistiques Patients & Planification du Flux")
-    st.info("""
-        Ce module calcule la durée moyenne des traitements (7301, 7311, 25.110) 
-        et détermine le nombre de nouveaux patients nécessaires pour remplir vos agendas.
-    """)
+    st.title("👥 Statistiques & Planification du Flux")
     
-    uploaded_file = st.sidebar.file_uploader("📂 Déposer l'export Excel (Prestation)", type="xlsx", key="stats_p_up")
+    uploaded_file = st.sidebar.file_uploader("📂 Déposer l'export Excel (Prestation)", type="xlsx")
 
     if uploaded_file:
         try:
-            # 1. CHARGEMENT ET NETTOYAGE
             df = pd.read_excel(uploaded_file, sheet_name='Prestation')
             
             col_tarif = df.columns[2]    # C: Tarif
             col_patient = df.columns[8]  # I: Patient
-            col_fourn = df.columns[9]   # J: Fournisseur
             col_montant = df.columns[11] # L: Montant
             col_date = df.columns[0]    # A: Date de séance
 
-            # Conversion types
             df[col_tarif] = df[col_tarif].astype(str).str.strip()
             df[col_date] = pd.to_datetime(df[col_date], errors='coerce')
             
-            # Filtre strict : Montant > 0 et Codes spécifiques
             codes_valides = ["7301", "7311", "25.110"]
-            mask = (df[col_montant] > 0) & (df[col_tarif].isin(codes_valides))
-            df_seances = df[mask].copy()
+            df_seances = df[(df[col_montant] > 0) & (df[col_tarif].isin(codes_valides))].copy()
 
             if not df_seances.empty:
-                # --- SECTION 1 : ANALYSE DES DONNÉES HISTORIQUES ---
-                st.subheader("📊 Analyse des traitements terminés")
-                
-                # Groupement par patient
+                # --- SECTION 1 : ANALYSE HISTORIQUE ---
                 stats_par_patient = df_seances.groupby(col_patient).size().reset_index(name='nb_seances')
                 moyenne_calculee = stats_par_patient['nb_seances'].mean()
-                mediane_calculee = stats_par_patient['nb_seances'].median()
 
+                # --- SECTION 2 : PLANIFICATION DE CAPACITÉ INDIVIDUELLE ---
+                st.markdown("---")
+                st.subheader("🏦 Capacité de l'Équipe & Congés")
+                
+                st.write("Ajustez le nombre de places et les semaines travaillées par thérapeute :")
+                
+                # Tableau éditable avec la nouvelle colonne "Semaines / an"
+                if 'capa_df' not in st.session_state:
+                    st.session_state.capa_df = pd.DataFrame([
+                        {"Thérapeute": "Thérapeute A", "Places/Semaine": 40, "Semaines/an": 43},
+                        {"Thérapeute": "Thérapeute B", "Places/Semaine": 40, "Semaines/an": 45},
+                        {"Thérapeute": "Thérapeute C", "Places/Semaine": 20, "Semaines/an": 40},
+                    ])
+                
+                edited_capa = st.data_editor(st.session_state.capa_df, num_rows="dynamic", use_container_width=True)
+                
+                # CALCUL DE LA CAPACITÉ LISSÉE (Moyenne réelle par semaine sur l'année)
+                # On calcule le volume total annuel de RDV produit par le cabinet
+                edited_capa['Total_Annuel'] = edited_capa['Places/Semaine'] * edited_capa['Semaines/an']
+                volume_annuel_total = edited_capa['Total_Annuel'].sum()
+                
+                # Capacité lissée hebdomadaire = Total annuel / 52.14 semaines
+                capa_lissee = volume_annuel_total / 52.14
+                total_theorique_max = edited_capa["Places/Semaine"].sum()
+
+                # --- SECTION 3 : PARAMÈTRES ET CALCUL DU FLUX ---
+                st.markdown("### ⚙️ Paramètres du Flux")
                 c1, c2, c3 = st.columns(3)
-                c1.metric("Moyenne observée", f"{moyenne_calculee:.1f} séanc.")
-                c2.metric("Médiane observée", f"{int(mediane_calculee)} séanc.")
-                c3.metric("Total Patients Unique", len(stats_par_patient))
+                
+                with c1:
+                    val_moyenne = st.number_input("Séances / traitement", value=float(round(moyenne_calculee, 1)), step=0.5)
+                with c2:
+                    intensite = st.slider("Rythme (séances / sem / pat.)", 0.5, 3.0, 1.2, 0.1)
+                with c3:
+                    jours_ouvres = st.number_input("Jours d'ouverture / sem.", value=5)
 
-                with st.expander("💡 Pourquoi ces chiffres ?"):
-                    st.write("""
-                        Cette moyenne inclut tous les patients de l'export. 
-                        Notez que les patients ayant commencé avant l'export ou encore en traitement 
-                        peuvent légèrement influencer ce chiffre. Utilisez la médiane pour une vision plus stable.
-                    """)
+                # Calcul du besoin
+                besoin_hebdo = (capa_lissee * intensite) / val_moyenne
+                besoin_jour = besoin_hebdo / jours_ouvres
 
-                # --- SECTION 2 : PLANIFICATION DE CAPACITÉ ---
+                # --- AFFICHAGE DES RÉSULTATS ---
                 st.markdown("---")
-                st.subheader("🏦 Calculateur de Flux (Objectif Remplissage)")
+                st.success(f"### Objectif : **{besoin_jour:.1f}** nouveaux patients / jour")
                 
-                col_left, col_right = st.columns([1, 1])
+                m1, m2, m3 = st.columns(3)
+                m1.metric("Capacité Hebdo. réelle", f"{capa_lissee:.1f} RDV", help="Volume annuel divisé par 52.14")
+                m2.metric("Nouveaux patients / sem.", f"{besoin_hebdo:.1f}")
+                m3.metric("Nouveaux patients / mois", f"{int(besoin_hebdo * 4.34)}")
 
-                with col_left:
-                    st.write("**1. Capacité de l'équipe**")
-                    # Tableau éditable pour définir les places
-                    if 'capa_df' not in st.session_state:
-                        st.session_state.capa_df = pd.DataFrame([
-                            {"Thérapeute": "Thérapeute A", "Places/Semaine": 40},
-                            {"Thérapeute": "Thérapeute B", "Places/Semaine": 40},
-                            {"Thérapeute": "Thérapeute C", "Places/Semaine": 20},
-                        ])
-                    
-                    edited_capa = st.data_editor(st.session_state.capa_df, num_rows="dynamic", use_container_width=True)
-                    
-                    total_theorique = edited_capa["Places/Semaine"].sum()
-                    # Lissage sur 43 semaines
-                    capa_lissee = total_theorique * (43 / 52.14)
-                
-                with col_right:
-                    st.write("**2. Paramètres Métier**")
-                    # L'utilisateur peut ajuster la moyenne s'il sait qu'elle est biaisée
-                    val_moyenne = st.number_input("Séances moyennes par traitement", value=float(round(moyenne_calculee, 1)), step=0.5)
-                    intensite = st.slider("Rythme (séances / semaine / patient)", 0.5, 3.0, 1.2, 0.1)
-                    jours_ouvres = st.number_input("Jours d'ouverture du cabinet / semaine", value=5, min_value=1)
-
-                # --- CALCUL FINAL DU FLUX ---
-                # Formule : (Capacité Lissée * Intensité) / Nombre de séances par traitement
-                nouveaux_p_hebdo = (capa_lissee * intensite) / val_moyenne
-                nouveaux_p_jour = nouveaux_p_hebdo / jours_ouvres
-
-                st.markdown("---")
-                st.success(f"### Cible de recrutement : **{nouveaux_p_jour:.1f}** nouveaux patients / jour")
-                
-                res1, res2, res3 = st.columns(3)
-                res1.metric("Capacité moyenne réelle", f"{capa_lissee:.1f} RDV/sem.", help="Lissée sur 43 semaines de travail")
-                res2.metric("Besoin hebdomadaire", f"{nouveaux_p_hebdo:.1f} pat.")
-                res3.metric("Besoin mensuel", f"{int(nouveaux_p_hebdo * 4.34)} pat.")
-
-                st.warning(f"""
-                    **Interprétation :** Pour maintenir vos agendas pleins ({total_theorique} places théoriques lissées à 43 semaines), 
-                    il vous faut intégrer **{nouveaux_p_hebdo:.1f}** nouveaux patients par semaine, car chaque patient 
-                    libère sa place après **{val_moyenne}** séances.
+                st.info(f"""
+                    **Détail du calcul :** Votre équipe produit un volume de **{volume_annuel_total}** séances par an.  
+                    Sur une semaine moyenne (en comptant les vacances), vous avez **{capa_lissee:.1f}** places à remplir.  
+                    Pour maintenir ce rythme, il vous faut **{besoin_hebdo:.1f}** nouvelles admissions par semaine.
                 """)
 
-                # --- GRAPHIQUE DE RÉPARTITION ---
-                st.subheader("📊 Distribution du volume par patient")
-                fig = px.histogram(stats_par_patient, x="nb_seances", nbins=20, 
-                                   title="Nombre de patients par tranche de séances",
-                                   labels={'nb_seances': 'Nombre de séances', 'count': 'Nombre de patients'},
-                                   color_discrete_sequence=['#00CCFF'])
-                st.plotly_chart(fig, use_container_width=True)
-
-            else:
-                st.warning("Aucune donnée trouvée pour les codes 7301, 7311 ou 25.110.")
-
         except Exception as e:
-            st.error(f"Erreur d'analyse : {e}")
-
-# Intégration dans votre logique de pages exist
-if st.session_state.page == "stats_patients":
-    render_stats_patients()
+            st.error(f"Erreur : {e}")
