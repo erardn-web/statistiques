@@ -514,122 +514,96 @@ elif st.session_state.page == "bilan":
             st.error(f"Erreur d'analyse : {e}")
 
 # ==========================================
-# 👥 MODULE : STATISTIQUES & FLUX PATIENTS
+# 👥 MODULE : STATISTIQUES & FLUX PATIENTS (Version Optimisée)
 # ==========================================
 def render_stats_patients():
-    # Bouton de retour sécurisé
     if st.sidebar.button("⬅️ Retour Accueil"):
         st.session_state.page = "accueil"
         st.rerun()
 
     st.title("👥 Statistiques & Planification du Flux")
-    st.markdown("---")
-
-    # Sidebar pour l'import spécifique à ce module
+    
     uploaded_file = st.sidebar.file_uploader("📂 Déposer l'export Excel (Prestation)", type="xlsx", key="uploader_stats")
 
     if uploaded_file:
         try:
-            # 1. CHARGEMENT DES DONNÉES
-            df = pd.read_excel(uploaded_file, sheet_name='Prestation')
+            # 1. CHARGEMENT INITIAL (Mis en cache pour éviter de relire le fichier à chaque clic)
+            @st.cache_data
+            def load_and_filter(file):
+                df = pd.read_excel(file, sheet_name='Prestation')
+                col_date = df.columns[0]
+                col_tarif = df.columns[2]
+                col_patient = df.columns[8]
+                col_montant = df.columns[11]
+                
+                df[col_tarif] = df[col_tarif].astype(str).str.strip()
+                df[col_date] = pd.to_datetime(df[col_date], errors='coerce')
+                
+                codes_valides = ["7301", "7311", "25.110"]
+                mask = (df[col_montant] > 0) & (df[col_tarif].isin(codes_valides))
+                return df[mask].copy(), col_patient
             
-            # Identification des colonnes par index pour éviter les problèmes de noms
-            col_date = df.columns[0]    # A: Date
-            col_tarif = df.columns[2]   # C: Code Tarif
-            col_patient = df.columns[8] # I: Patient
-            col_montant = df.columns[11] # L: Montant
-
-            # Nettoyage et conversion
-            df[col_tarif] = df[col_tarif].astype(str).str.strip()
-            df[col_date] = pd.to_datetime(df[col_date], errors='coerce')
-            
-            # Filtre sur les codes spécifiques
-            codes_valides = ["7301", "7311", "25.110"]
-            mask = (df[col_montant] > 0) & (df[col_tarif].isin(codes_valides))
-            df_seances = df[mask].copy()
+            df_seances, col_patient = load_and_filter(uploaded_file)
 
             if not df_seances.empty:
-                # --- SECTION 1 : ANALYSE DES TRAITEMENTS ---
-                st.subheader("📊 Analyse des données historiques")
-                
+                # Analyse rapide hors formulaire
                 stats_p = df_seances.groupby(col_patient).size().reset_index(name='nb_seances')
                 moyenne_obs = stats_p['nb_seances'].mean()
-                total_patients = len(stats_p)
-
-                c1, c2, c3 = st.columns(3)
-                c1.metric("Moyenne observée", f"{moyenne_obs:.1f} séanc.")
-                c2.metric("Médiane", f"{int(stats_p['nb_seances'].median())} séanc.")
-                c3.metric("Patients analysés", total_patients)
-
-                # --- SECTION 2 : CONFIGURATION DE L'ÉQUIPE ---
-                st.markdown("---")
-                st.subheader("🏦 Capacité de l'Équipe & Congés")
-                st.write("Définissez le temps de travail et les vacances de chaque collaborateur :")
-
-                # Initialisation du tableau dans le session_state
-                if 'capa_df' not in st.session_state:
-                    st.session_state.capa_df = pd.DataFrame([
-                        {"Thérapeute": "Thérapeute 1", "Places/Semaine": 40, "Semaines/an": 43},
-                        {"Thérapeute": "Thérapeute 2", "Places/Semaine": 40, "Semaines/an": 43},
-                        {"Thérapeute": "Thérapeute 3", "Places/Semaine": 20, "Semaines/an": 43},
-                    ])
-
-                # Tableau éditable
-                edited_df = st.data_editor(st.session_state.capa_df, num_rows="dynamic", use_container_width=True)
                 
-                # Calcul de la capacité annuelle cumulée
-                edited_df['Total_Annuel'] = edited_df['Places/Semaine'] * edited_df['Semaines/an']
-                volume_annuel_cabinet = edited_df['Total_Annuel'].sum()
+                # --- FORMULAIRE DE SAISIE ---
+                st.info("💡 Modifiez les paramètres ci-dessous et cliquez sur 'Lancer le calcul' pour voir les résultats.")
                 
-                # Capacité lissée hebdomadaire (Moyenne sur 52.14 semaines)
-                capa_lissee_hebdo = volume_annuel_cabinet / 52.14
-                total_places_theo = edited_df['Places/Semaine'].sum()
+                with st.form("form_planification"):
+                    st.subheader("🏦 Configuration de l'Équipe")
+                    
+                    if 'capa_df' not in st.session_state:
+                        st.session_state.capa_df = pd.DataFrame([
+                            {"Thérapeute": "Thérapeute 1", "Places/Semaine": 40, "Semaines/an": 43},
+                            {"Thérapeute": "Thérapeute 2", "Places/Semaine": 40, "Semaines/an": 43},
+                            {"Thérapeute": "Thérapeute 3", "Places/Semaine": 20, "Semaines/an": 43},
+                        ])
 
-                # --- SECTION 3 : SIMULATEUR DE FLUX ---
-                st.markdown("### ⚙️ Paramètres de Simulation")
-                s1, s2, s3 = st.columns(3)
-                
-                with s1:
-                    duree_traitement = st.number_input("Séances par traitement", value=float(round(moyenne_obs, 1)), step=0.5)
-                with s2:
-                    intensite = st.slider("Fréquence (séances/sem/pat)", 0.5, 3.0, 1.2, 0.1)
-                with s3:
-                    jours_ouvert = st.slider("Jours d'ouverture / sem", 1, 6, 5)
+                    # Le tableau éditable à l'intérieur du formulaire
+                    edited_df = st.data_editor(st.session_state.capa_df, num_rows="dynamic", use_container_width=True)
+                    
+                    st.markdown("### ⚙️ Simulation")
+                    s1, s2, s3 = st.columns(3)
+                    with s1:
+                        duree_trait = st.number_input("Séances / traitement", value=float(round(moyenne_obs, 1)), step=0.5)
+                    with s2:
+                        intensite = st.slider("Fréquence (séances/sem)", 0.5, 3.0, 1.2, 0.1)
+                    with s3:
+                        jours_ouv = st.slider("Jours d'ouverture", 1, 6, 5)
 
-                # Calcul du besoin de recrutement
-                # Formule : (Capacité Hebdo Moyenne * Intensité) / Nombre de séances total du traitement
-                besoin_hebdo = (capa_lissee_hebdo * intensite) / duree_traitement
-                besoin_journalier = besoin_hebdo / jours_ouvert
+                    # LE BOUTON MAGIQUE
+                    submitted = st.form_submit_button("🚀 Lancer le calcul", use_container_width=True, type="primary")
 
-                # --- RÉSULTATS ---
-                st.markdown("---")
-                st.success(f"### Objectif : **{besoin_journalier:.1f}** nouveaux patients / jour")
-                
-                res1, res2, res3 = st.columns(3)
-                res1.metric("Capacité moyenne réelle", f"{capa_lissee_hebdo:.1f} RDV/sem", help="Compte tenu des vacances de chacun")
-                res2.metric("Nouveaux patients / sem", f"{besoin_hebdo:.1f}")
-                res3.metric("Nouveaux patients / mois", f"{int(besoin_hebdo * 4.34)}")
+                if submitted:
+                    # Enregistrement des données dans le session_state pour qu'elles restent après soumission
+                    st.session_state.capa_df = edited_df
+                    
+                    # Calculs
+                    edited_df['Total_Annuel'] = edited_df['Places/Semaine'] * edited_df['Semaines/an']
+                    volume_annuel = edited_df['Total_Annuel'].sum()
+                    capa_lissee = volume_annuel / 52.14
+                    
+                    besoin_hebdo = (capa_lissee * intensite) / duree_trait
+                    besoin_jour = besoin_hebdo / jours_ouv
 
-                with st.expander("📝 Comprendre le calcul"):
-                    st.write(f"""
-                    1. Votre équipe peut honorer **{volume_annuel_cabinet}** rendez-vous par an.
-                    2. En lissant sur l'année, cela représente **{capa_lissee_hebdo:.1f}** places disponibles par semaine.
-                    3. Comme chaque patient vient **{intensite}** fois par semaine et reste **{duree_traitement}** séances, 
-                       vous devez renouveler votre patientèle à hauteur de **{besoin_hebdo:.1f}** nouveaux dossiers par semaine 
-                       pour ne pas avoir de trous dans l'agenda.
-                    """)
-
+                    # --- RÉSULTATS ---
+                    st.markdown("---")
+                    st.success(f"### Objectif : **{besoin_jour:.1f}** nouveaux patients / jour")
+                    
+                    r1, r2, r3 = st.columns(3)
+                    r1.metric("Capacité moyenne", f"{capa_lissee:.1f} RDV/sem")
+                    r2.metric("Nouveaux patients/sem", f"{besoin_hebdo:.1f}")
+                    r3.metric("Nouveaux patients/mois", f"{int(besoin_hebdo * 4.34)}")
+                    
+                    st.balloons() # Optionnel : petite animation de succès
             else:
-                st.warning("⚠️ Aucun acte 7301, 7311 ou 25.110 trouvé avec un montant positif.")
+                st.warning("Aucun acte 7301, 7311 ou 25.110 trouvé.")
 
         except Exception as e:
-            st.error(f"❌ Erreur lors de l'analyse : {e}")
+            st.error(f"Erreur : {e}")
     else:
-        st.info("👋 Veuillez glisser l'export Excel dans la barre latérale pour analyser vos statistiques.")
-
-# --- APPEL DE LA FONCTION DANS VOTRE LOGIQUE DE NAVIGATION ---
-if 'page' not in st.session_state:
-    st.session_state.page = "accueil"
-
-if st.session_state.page == "stats_patients":
-    render_stats_patients()
+        st.info("Veuillez charger un export Excel pour commencer.")
