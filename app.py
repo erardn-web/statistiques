@@ -450,98 +450,87 @@ import pandas as pd
 import plotly.express as px
 
 # ==========================================
-# 🏦 MODULE : BILAN COMPTABLE (AVEC ALERTE)
+# 🏦 MODULE : BILAN COMPTABLE (COMPLET)
 # ==========================================
 def render_bilan_comptable():
-    # --- BOUTON RETOUR ---
     if st.sidebar.button("⬅️ Retour Accueil", key="back_bilan"):
         st.session_state.page = "accueil"
         st.rerun()
 
-    st.title("🏦 Bilan Comptable par Fournisseur")
+    st.title("🏦 Bilan Comptable & Impayés")
     st.markdown("---")
 
-    # --- CHARGEMENT DU FICHIER ---
     uploaded_file = st.sidebar.file_uploader("📂 Déposer l'export Excel (onglet 'Factures')", type="xlsx", key="bilan_up")
 
     if not uploaded_file:
-        st.info("👋 Veuillez charger votre export 'Factures' pour générer le bilan.")
+        st.info("👋 Veuillez charger votre export 'Factures'.")
         return
 
     try:
-        # --- CORRECTION NOM ONGLET : 'Factures' au lieu de 'Facture' ---
         df_f = pd.read_excel(uploaded_file, sheet_name='Factures')
         
-        # --- CONFIGURATION DYNAMIQUE DES COLONNES ---
-        col_date_f = df_f.columns[2]     # Colonne C : Date de la facture
-        col_fourn_f = df_f.columns[9]    # Colonne J : Fournisseur
-        col_statut_f = df_f.columns[12]   # Colonne M : Statut (pour les rejets)
-        col_mont_rejet = df_f.columns[13]  # Colonne N : Montant (pour les rejets)
-        col_ca_f = df_f.columns[14]      # Colonne O : Montant (CA)
-        
-        # Nettoyage et conversion
+        # --- CONFIGURATION DES COLONNES ---
+        col_date_f = df_f.columns[2]     # C : Date facture
+        col_fourn_f = df_f.columns[9]    # J : Fournisseur
+        col_statut_f = df_f.columns[12]   # M : Statut
+        col_mont_rejet = df_f.columns[13]  # N : Montant rejet
+        col_ca_f = df_f.columns[14]      # O : Montant (CA)
+        col_paye_f = df_f.columns[15]    # P : Date de paiement
+
+        # Nettoyage
         df_f[col_date_f] = pd.to_datetime(df_f[col_date_f], errors='coerce')
+        df_f[col_paye_f] = pd.to_datetime(df_f[col_paye_f], errors='coerce')
         df_f[col_ca_f] = pd.to_numeric(df_f[col_ca_f], errors='coerce').fillna(0)
         df_f[col_mont_rejet] = pd.to_numeric(df_f[col_mont_rejet], errors='coerce').fillna(0)
         df_f = df_f.dropna(subset=[col_date_f])
 
-        # --- GESTION DES ANNÉES ---
+        # Choix de l'année
         annees = sorted(df_f[col_date_f].dt.year.unique().astype(int), reverse=True)
+        annee_sel = st.sidebar.selectbox("Année d'analyse :", annees)
         
-        if len(annees) > 1:
-            st.warning(f"⚠️ **Note :** Cet export contient des données sur {len(annees)} années ({min(annees)} à {max(annees)}).")
-
-        annee_sel = st.sidebar.selectbox("Sélectionner l'année :", annees)
+        # --- FILTRAGE ANNÉE ---
         df_sel = df_f[df_f[col_date_f].dt.year == annee_sel].copy()
+        date_fin_annee = pd.Timestamp(year=annee_sel, month=12, day=31)
 
-        # --- DÉTECTION DES FACTURES REJETÉES ---
+        # --- 1. ALERTE REJETS ---
         statuts_rejet = ["rejeté (reçu)", "rejeté (envoyé)"]
-        mask_rejet = df_sel[col_statut_f].astype(str).str.strip().str.lower().isin(statuts_rejet)
-        df_rejets = df_sel[mask_rejet]
+        total_rejets = df_sel[df_sel[col_statut_f].astype(str).str.strip().str.lower().isin(statuts_rejet)][col_mont_rejet].sum()
         
-        total_perte_rejet = df_rejets[col_mont_rejet].sum()
+        if total_rejets > 0:
+            st.error(f"⚠️ **Factures rejetées à traiter pour {annee_sel} : {total_rejets:,.2f} CHF**")
 
-        if total_perte_rejet > 0:
-            st.error(f"""
-            ### ⚠️ Attention : Factures rejetées détectées
-            **Il vous reste des factures rejetées non traitées pour l'année {annee_sel}.**
-            
-            Montant total à récupérer : **{total_perte_rejet:,.2f} CHF**
-            """)
-            with st.expander("🔍 Voir la liste des rejets"):
-                st.dataframe(df_rejets[[col_date_f, col_fourn_f, col_statut_f, col_mont_rejet]], use_container_width=True)
-            st.markdown("---")
+        # --- 2. CALCUL DES IMPAYÉS AU 31.12 ---
+        # Une facture est impayée au 31.12 si :
+        # - Elle n'a pas de date de paiement (NaT)
+        # - OU sa date de paiement est strictement supérieure au 31.12 de l'année concernée
+        mask_impaye = (df_sel[col_paye_f].isna()) | (df_sel[col_paye_f] > date_fin_annee)
+        total_impayes = df_sel[mask_impaye][col_ca_f].sum()
 
-        # --- CALCULS ET GRAPHIQUES ---
-        st.subheader(f"📊 Analyse du Chiffre d'Affaires - {annee_sel}")
-        
-        bilan = df_sel.groupby(col_fourn_f).agg({
+        st.subheader(f"📊 Résumé de l'exercice {annee_sel}")
+        c1, c2, c3 = st.columns(3)
+        c1.metric("CA Total", f"{df_sel[col_ca_f].sum():,.2f} CHF")
+        c2.metric("Impayés au 31.12", f"{total_impayes:,.2f} CHF", delta_color="inverse")
+        c3.metric("Factures traitées", len(df_sel))
+
+        # --- 3. ANALYSE MENSUELLE ---
+        st.write("### 📅 Évolution mensuelle du CA")
+        df_sel['Mois'] = df_sel[col_date_f].dt.strftime('%m - %B')
+        mensuel = df_sel.groupby('Mois')[col_ca_f].sum().reset_index()
+        st.dataframe(mensuel.style.format({col_ca_f: '{:,.2f} CHF'}), use_container_width=True)
+
+        # --- 4. BILAN FOURNISSEURS ---
+        st.write("### 👨‍⚕️ Détail par Fournisseur")
+        bilan_f = df_sel.groupby(col_fourn_f).agg({
             col_ca_f: 'sum',
             col_date_f: 'count'
-        }).rename(columns={col_ca_f: 'CA Total', col_date_f: 'Nombre de Factures'})
+        }).rename(columns={col_ca_f: 'CA Total', col_date_f: 'Nombre Factures'}).sort_values('CA Total', ascending=False)
         
-        bilan = bilan.sort_values(by='CA Total', ascending=False)
+        st.dataframe(bilan_f.style.format({'CA Total': '{:,.2f} CHF'}), use_container_width=True)
 
-        c1, c2 = st.columns(2)
-        c1.metric("CA Total", f"{bilan['CA Total'].sum():,.2f} CHF")
-        c2.metric("Factures", f"{bilan['Nombre de Factures'].sum()}")
-
-        fig = px.pie(bilan.reset_index(), values='CA Total', names=col_fourn_f, 
-                     title=f"Répartition par Fournisseur", hole=0.4)
-        st.plotly_chart(fig, use_container_width=True)
-
-        st.dataframe(bilan.style.format({'CA Total': '{:,.2f} CHF'}), use_container_width=True)
-
-    except ValueError as e:
-        if "Worksheet" in str(e):
-            st.error("❌ L'onglet 'Factures' est introuvable dans votre fichier Excel.")
-            st.info("Vérifiez le nom de l'onglet dans votre export (il doit s'appeler exactement 'Factures').")
-        else:
-            st.error(f"❌ Erreur : {e}")
     except Exception as e:
-        st.error(f"❌ Erreur lors de l'analyse : {e}")
+        st.error(f"❌ Erreur : {e}")
 
-# Appel
+# Appel du module
 if st.session_state.page == "bilan":
     render_bilan_comptable()
 # ==========================================
@@ -673,6 +662,7 @@ def render_stats_patients():
 # --- APPEL ---
 if 'page' not in st.session_state: st.session_state.page = "accueil"
 if st.session_state.page == "stats_patients": render_stats_patients()
+
 
 
 
