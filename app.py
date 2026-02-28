@@ -63,36 +63,68 @@ if st.session_state.page == "accueil":
     st.markdown("---")
     st.write("### Choisissez le module d'analyse souhaité :")
     
-    col1, col2, col3, col4, col5 = st.columns(5)
+    # Injection de CSS pour transformer les boutons en "tuiles" d'application
+    st.markdown("""
+    <style>
+    div.stButton > button {
+        height: 120px;
+        border-radius: 12px;
+        border: 2px solid #f0f2f6;
+        background-color: #ffffff;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+        transition: all 0.2s ease-in-out;
+    }
+    div.stButton > button:hover {
+        border-color: #00CCFF; /* Couleur de survol (Bleu médical) */
+        transform: translateY(-4px);
+        box-shadow: 0 8px 15px rgba(0,0,0,0.1);
+    }
+    div.stButton > button p {
+        font-size: 22px;
+        font-weight: 600;
+        color: #31333F;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+    # Ligne 1 : 3 modules
+    col1, col2, col3 = st.columns(3)
+    
     with col1:
-        st.info("📊 **MODULE FACTURATION - export des factures**")
-        if st.button("Accéder à la Facturation", use_container_width=True):
+        if st.button("📊 Facturation", use_container_width=True):
             st.session_state.page = "factures"
             st.rerun()
+        st.caption("📌 Export et analyse des factures")
             
     with col2:
-        st.success("🩺 **MODULE MÉDECIN - export des factures**")
-        if st.button("Accéder aux Médecins", use_container_width=True):
+        if st.button("👨‍⚕️ Médecins", use_container_width=True):
             st.session_state.page = "medecins"
             st.rerun()
+        st.caption("📌 Performance et CA par médecin")
 
     with col3:
-        st.warning("🏷️ **MODULE TARIFS - export des prestations**")
-        if st.button("Accéder aux Tarifs", use_container_width=True):
+        if st.button("🏷️ Tarifs", use_container_width=True):
             st.session_state.page = "tarifs"
             st.rerun()
+        st.caption("📌 Tendances des prestations")
 
+    st.write("") # Petit espace entre les deux lignes
+    st.write("")
+
+    # Ligne 2 : 2 modules (dans une grille de 3 pour garder la même largeur de bouton)
+    col4, col5, col6 = st.columns(3)
+    
     with col4:
-        st.info("🏦 **BILAN COMPTABLE - export des prestations d'une seule année**")
-        if st.button("Accéder au Bilan", use_container_width=True, type="primary"):
+        if st.button("🏦 Bilan Comptable", use_container_width=True):
             st.session_state.page = "bilan"
             st.rerun()
+        st.caption("📌 Synthèse annuelle par fournisseur")
 
     with col5:
-        st.info("👥 **STATISTIQUES PATIENTS**")
-        if st.button("Nombre de séances", use_container_width=True):
+        if st.button("👥 Stats Patients", use_container_width=True):
             st.session_state.page = "stats_patients"
             st.rerun()
+        st.caption("📌 Pilotage du flux et occupation")
 
 # ==========================================
 # 📊 MODULE FACTURES (ORIGINAL RÉPARÉ)
@@ -646,3 +678,4 @@ def render_stats_patients():
 # --- APPEL ---
 if 'page' not in st.session_state: st.session_state.page = "accueil"
 if st.session_state.page == "stats_patients": render_stats_patients()
+
