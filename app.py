@@ -466,7 +466,7 @@ elif st.session_state.page == "bilan":
             
             df_f = pd.read_excel(up, sheet_name=ong_f)
             
-            # --- CONFIGURATION DES COLONNES ---
+           # --- CONFIGURATION DES COLONNES ---
             col_date_f = df_f.columns[2]   # C: Date de la facture
             col_fourn_f = df_f.columns[9]  # J: Fournisseur
             col_ca_f = df_f.columns[14]    # O: Montant (CA)
@@ -476,7 +476,17 @@ elif st.session_state.page == "bilan":
             df_f[col_ca_f] = pd.to_numeric(df_f[col_ca_f], errors='coerce').fillna(0)
             df_f = df_f.dropna(subset=[col_date_f])
 
+            # Extraction des années uniques
             annees = sorted(df_f[col_date_f].dt.year.unique().astype(int), reverse=True)
+            
+            # --- NOUVEAU : ALERTE MULTI-ANNÉES ---
+            if len(annees) > 1:
+                st.warning(
+                    f"⚠️ **Attention :** L'export chargé contient des données sur {len(annees)} années différentes "
+                    f"({min(annees)} à {max(annees)}). Le bilan est conçu pour analyser un exercice comptable unique. "
+                    "Les données affichées ci-dessous sont filtrées selon l'année sélectionnée dans le menu de gauche."
+                )
+
             annee = st.sidebar.selectbox("Année d'analyse :", annees)
             df_sel = df_f[df_f[col_date_f].dt.year == annee].copy()
 
@@ -678,4 +688,5 @@ def render_stats_patients():
 # --- APPEL ---
 if 'page' not in st.session_state: st.session_state.page = "accueil"
 if st.session_state.page == "stats_patients": render_stats_patients()
+
 
