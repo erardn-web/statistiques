@@ -450,7 +450,7 @@ import pandas as pd
 import plotly.express as px
 
 # ==========================================
-# 🏦 MODULE : BILAN COMPTABLE (COMPLET)
+# 🏦 MODULE : BILAN COMPTABLE (COMPLET + ALERTE)
 # ==========================================
 def render_bilan_comptable():
     if st.sidebar.button("⬅️ Retour Accueil", key="back_bilan"):
@@ -477,7 +477,7 @@ def render_bilan_comptable():
         col_ca_f = df_f.columns[14]      # O : Montant (CA)
         col_paye_f = df_f.columns[15]    # P : Date de paiement
 
-        # Nettoyage
+        # Nettoyage et Conversion
         df_f[col_date_f] = pd.to_datetime(df_f[col_date_f], errors='coerce')
         df_f[col_paye_f] = pd.to_datetime(df_f[col_paye_f], errors='coerce')
         df_f[col_ca_f] = pd.to_numeric(df_f[col_ca_f], errors='coerce').fillna(0)
@@ -488,37 +488,41 @@ def render_bilan_comptable():
         annees = sorted(df_f[col_date_f].dt.year.unique().astype(int), reverse=True)
         annee_sel = st.sidebar.selectbox("Année d'analyse :", annees)
         
-        # --- FILTRAGE ANNÉE ---
+        # Filtrage Année
         df_sel = df_f[df_f[col_date_f].dt.year == annee_sel].copy()
         date_fin_annee = pd.Timestamp(year=annee_sel, month=12, day=31)
 
-        # --- 1. ALERTE REJETS ---
+        # --- 1. RÉTABLISSEMENT DE L'ALERTE DES REJETS (COLONNE M & N) ---
         statuts_rejet = ["rejeté (reçu)", "rejeté (envoyé)"]
-        total_rejets = df_sel[df_sel[col_statut_f].astype(str).str.strip().str.lower().isin(statuts_rejet)][col_mont_rejet].sum()
-        
+        df_rejets = df_sel[df_sel[col_statut_f].astype(str).str.strip().str.lower().isin(statuts_rejet)]
+        total_rejets = df_rejets[col_mont_rejet].sum()
+
         if total_rejets > 0:
-            st.error(f"⚠️ **Factures rejetées à traiter pour {annee_sel} : {total_rejets:,.2f} CHF**")
+            st.error(f"### ⚠️ Attention, il vous reste des factures rejetées non traitées pour l'année {annee_sel}")
+            st.markdown(f"**Montant total à récupérer : {total_rejets:,.2f} CHF**")
+            st.markdown("---")
 
         # --- 2. CALCUL DES IMPAYÉS AU 31.12 ---
-        # Une facture est impayée au 31.12 si :
-        # - Elle n'a pas de date de paiement (NaT)
-        # - OU sa date de paiement est strictement supérieure au 31.12 de l'année concernée
+        # Impayé si pas de date de paiement OU paiement reçu après le 31.12 de l'année
         mask_impaye = (df_sel[col_paye_f].isna()) | (df_sel[col_paye_f] > date_fin_annee)
         total_impayes = df_sel[mask_impaye][col_ca_f].sum()
 
+        # --- 3. AFFICHAGE DES CHIFFRES CLÉS ---
         st.subheader(f"📊 Résumé de l'exercice {annee_sel}")
         c1, c2, c3 = st.columns(3)
-        c1.metric("CA Total", f"{df_sel[col_ca_f].sum():,.2f} CHF")
-        c2.metric("Impayés au 31.12", f"{total_impayes:,.2f} CHF", delta_color="inverse")
-        c3.metric("Factures traitées", len(df_sel))
+        c1.metric("CA Total Facturé", f"{df_sel[col_ca_f].sum():,.2f} CHF")
+        c2.metric("Impayés au 31.12", f"{total_impayes:,.2f} CHF")
+        c3.metric("Nombre de factures", len(df_sel))
 
-        # --- 3. ANALYSE MENSUELLE ---
+        # --- 4. ANALYSE MENSUELLE ---
         st.write("### 📅 Évolution mensuelle du CA")
-        df_sel['Mois'] = df_sel[col_date_f].dt.strftime('%m - %B')
-        mensuel = df_sel.groupby('Mois')[col_ca_f].sum().reset_index()
-        st.dataframe(mensuel.style.format({col_ca_f: '{:,.2f} CHF'}), use_container_width=True)
+        df_sel['Mois_Num'] = df_sel[col_date_f].dt.month
+        df_sel['Mois'] = df_sel[col_date_f].dt.strftime('%B')
+        mensuel = df_sel.groupby(['Mois_Num', 'Mois'])[col_ca_f].sum().reset_index().sort_values('Mois_Num')
+        
+        st.table(mensuel[['Mois', col_ca_f]].rename(columns={col_ca_f: 'Chiffre d\'Affaires'}).set_index('Mois'))
 
-        # --- 4. BILAN FOURNISSEURS ---
+        # --- 5. BILAN FOURNISSEURS ---
         st.write("### 👨‍⚕️ Détail par Fournisseur")
         bilan_f = df_sel.groupby(col_fourn_f).agg({
             col_ca_f: 'sum',
@@ -528,7 +532,7 @@ def render_bilan_comptable():
         st.dataframe(bilan_f.style.format({'CA Total': '{:,.2f} CHF'}), use_container_width=True)
 
     except Exception as e:
-        st.error(f"❌ Erreur : {e}")
+        st.error(f"❌ Erreur lors de l'analyse : {e}")
 
 # Appel du module
 if st.session_state.page == "bilan":
@@ -662,6 +666,7 @@ def render_stats_patients():
 # --- APPEL ---
 if 'page' not in st.session_state: st.session_state.page = "accueil"
 if st.session_state.page == "stats_patients": render_stats_patients()
+
 
 
 
