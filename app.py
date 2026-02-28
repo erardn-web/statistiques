@@ -462,48 +462,40 @@ def render_bilan_comptable():
     st.markdown("---")
 
     # --- CHARGEMENT DU FICHIER ---
-    uploaded_file = st.sidebar.file_uploader("📂 Déposer l'export Excel (onglet 'Facture')", type="xlsx", key="bilan_up")
+    uploaded_file = st.sidebar.file_uploader("📂 Déposer l'export Excel (onglet 'Factures')", type="xlsx", key="bilan_up")
 
     if not uploaded_file:
-        st.info("👋 Veuillez charger votre export 'Facture' pour générer le bilan.")
+        st.info("👋 Veuillez charger votre export 'Factures' pour générer le bilan.")
         return
 
     try:
-        # Lecture de l'onglet spécifique
-        df_f = pd.read_excel(uploaded_file, sheet_name='Facture')
+        # --- CORRECTION NOM ONGLET : 'Factures' au lieu de 'Facture' ---
+        df_f = pd.read_excel(uploaded_file, sheet_name='Factures')
         
         # --- CONFIGURATION DYNAMIQUE DES COLONNES ---
-        # Utilisation des index pour correspondre à ton fichier Excel :
         col_date_f = df_f.columns[2]     # Colonne C : Date de la facture
         col_fourn_f = df_f.columns[9]    # Colonne J : Fournisseur
         col_statut_f = df_f.columns[12]   # Colonne M : Statut (pour les rejets)
         col_mont_rejet = df_f.columns[13]  # Colonne N : Montant (pour les rejets)
         col_ca_f = df_f.columns[14]      # Colonne O : Montant (CA)
-        col_paye_f = df_f.columns[15]    # Colonne P : Date de paiement
-
-        # Nettoyage et conversion des types de données
+        
+        # Nettoyage et conversion
         df_f[col_date_f] = pd.to_datetime(df_f[col_date_f], errors='coerce')
         df_f[col_ca_f] = pd.to_numeric(df_f[col_ca_f], errors='coerce').fillna(0)
         df_f[col_mont_rejet] = pd.to_numeric(df_f[col_mont_rejet], errors='coerce').fillna(0)
-        
-        # On retire les lignes où la date est invalide
         df_f = df_f.dropna(subset=[col_date_f])
 
         # --- GESTION DES ANNÉES ---
         annees = sorted(df_f[col_date_f].dt.year.unique().astype(int), reverse=True)
         
-        # 1. Alerte non bloquante si l'export contient plusieurs années
         if len(annees) > 1:
-            st.warning(f"⚠️ **Note :** Cet export contient des données sur {len(annees)} années ({min(annees)} à {max(annees)}). L'analyse est filtrée sur l'année choisie à gauche.")
+            st.warning(f"⚠️ **Note :** Cet export contient des données sur {len(annees)} années ({min(annees)} à {max(annees)}).")
 
-        annee_sel = st.sidebar.selectbox("Sélectionner l'année d'analyse :", annees)
-        
-        # Filtrage des données pour l'année sélectionnée
+        annee_sel = st.sidebar.selectbox("Sélectionner l'année :", annees)
         df_sel = df_f[df_f[col_date_f].dt.year == annee_sel].copy()
 
-        # --- DÉTECTION DES FACTURES REJETÉES (COLONNE M & N) ---
+        # --- DÉTECTION DES FACTURES REJETÉES ---
         statuts_rejet = ["rejeté (reçu)", "rejeté (envoyé)"]
-        # On nettoie le texte (minuscules + suppression espaces) pour une détection fiable
         mask_rejet = df_sel[col_statut_f].astype(str).str.strip().str.lower().isin(statuts_rejet)
         df_rejets = df_sel[mask_rejet]
         
@@ -516,14 +508,13 @@ def render_bilan_comptable():
             
             Montant total à récupérer : **{total_perte_rejet:,.2f} CHF**
             """)
-            with st.expander("🔍 Voir la liste des factures à traiter"):
+            with st.expander("🔍 Voir la liste des rejets"):
                 st.dataframe(df_rejets[[col_date_f, col_fourn_f, col_statut_f, col_mont_rejet]], use_container_width=True)
             st.markdown("---")
 
         # --- CALCULS ET GRAPHIQUES ---
         st.subheader(f"📊 Analyse du Chiffre d'Affaires - {annee_sel}")
         
-        # Groupement par fournisseur
         bilan = df_sel.groupby(col_fourn_f).agg({
             col_ca_f: 'sum',
             col_date_f: 'count'
@@ -531,27 +522,26 @@ def render_bilan_comptable():
         
         bilan = bilan.sort_values(by='CA Total', ascending=False)
 
-        # Affichage des indicateurs clés (KPI)
         c1, c2 = st.columns(2)
-        total_ca = bilan['CA Total'].sum()
-        c1.metric("Chiffre d'Affaires Total", f"{total_ca:,.2f} CHF")
-        c2.metric("Total Factures Émises", f"{bilan['Nombre de Factures'].sum()}")
+        c1.metric("CA Total", f"{bilan['CA Total'].sum():,.2f} CHF")
+        c2.metric("Factures", f"{bilan['Nombre de Factures'].sum()}")
 
-        # Graphique de répartition
         fig = px.pie(bilan.reset_index(), values='CA Total', names=col_fourn_f, 
-                     title=f"Répartition par Fournisseur ({annee_sel})",
-                     hole=0.4, color_discrete_sequence=px.colors.qualitative.Pastel)
+                     title=f"Répartition par Fournisseur", hole=0.4)
         st.plotly_chart(fig, use_container_width=True)
 
-        # Tableau récapitulatif
-        st.write("### Détail par fournisseur")
         st.dataframe(bilan.style.format({'CA Total': '{:,.2f} CHF'}), use_container_width=True)
 
+    except ValueError as e:
+        if "Worksheet" in str(e):
+            st.error("❌ L'onglet 'Factures' est introuvable dans votre fichier Excel.")
+            st.info("Vérifiez le nom de l'onglet dans votre export (il doit s'appeler exactement 'Factures').")
+        else:
+            st.error(f"❌ Erreur : {e}")
     except Exception as e:
         st.error(f"❌ Erreur lors de l'analyse : {e}")
-        st.info("Assurez-vous que le fichier Excel contient bien l'onglet 'Facture' avec les bonnes colonnes.")
 
-# Appel du module selon la navigation
+# Appel
 if st.session_state.page == "bilan":
     render_bilan_comptable()
 # ==========================================
@@ -683,6 +673,7 @@ def render_stats_patients():
 # --- APPEL ---
 if 'page' not in st.session_state: st.session_state.page = "accueil"
 if st.session_state.page == "stats_patients": render_stats_patients()
+
 
 
 
