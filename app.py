@@ -577,17 +577,29 @@ def render_stats_patients():
         return
 
     try:
-        @st.cache_data
+       @st.cache_data
         def get_full_analysis(file):
             df = pd.read_excel(file, sheet_name='Prestation')
             df.columns = [str(c).strip() for c in df.columns]
             
-            c_date, c_tarif, c_pat, c_mont = df.columns[0], df.columns[2], df.columns[8], df.columns[11]
-            df[c_date] = pd.to_datetime(df[c_date], errors='coerce')
+            # --- CORRECTION DU BUG 1970 ---
+            # 1. On cherche dynamiquement la colonne qui contient "date"
+            date_cols = [c for c in df.columns if 'date' in str(c).lower()]
+            c_date = date_cols[0] if date_cols else df.columns[0] 
+            
+            c_tarif, c_pat, c_mont = df.columns[2], df.columns[8], df.columns[11]
+            
+            # 2. On utilise ta fonction de conversion robuste
+            df[c_date] = df[c_date].apply(convertir_date)
+            
+            # 3. Sécurité : on supprime les éventuelles dates aberrantes (comme 1970)
+            df = df[df[c_date] >= pd.Timestamp('2000-01-01')]
+            # ------------------------------
+            
             df[c_tarif] = df[c_tarif].astype(str).str.strip()
             
             codes = ["7301", "7311", "25.110"]
-            df_f = df[(df[c_mont] > 0) & (df[c_tarif].isin(codes))].dropna(subset=[c_date, c_pat]).copy()
+            df_f = df[(df[c_mont] > 0) & (df[c_tarif].isin(codes))].dropna(subset=[c_date, c_pat]).copy().copy()
             
             # --- 1. CALCULS HISTORIQUES ---
             p_stats = df_f.groupby(c_pat).agg(
@@ -688,6 +700,7 @@ def render_stats_patients():
 # --- APPEL ---
 if 'page' not in st.session_state: st.session_state.page = "accueil"
 if st.session_state.page == "stats_patients": render_stats_patients()
+
 
 
 
