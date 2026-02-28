@@ -555,12 +555,8 @@ elif st.session_state.page == "bilan":
         except Exception as e:
             st.error(f"Erreur d'analyse : {e}")
 
-import streamlit as st
-import pandas as pd
-from datetime import datetime, timedelta
-
 # ==========================================
-# 👥 MODULE : PILOTAGE FLUX (V11.1 - Final Fix)
+# 👥 MODULE : PILOTAGE FLUX (V11.2 - Fix Date & Indent)
 # ==========================================
 def render_stats_patients():
     if st.sidebar.button("⬅️ Retour Accueil", key="btn_back_final"):
@@ -568,7 +564,7 @@ def render_stats_patients():
         st.rerun()
 
     st.sidebar.markdown("---")
-    uploaded_file = st.sidebar.file_uploader("📂 Déposer l'export Excel", type="xlsx", key="uploader_v11_1")
+    uploaded_file = st.sidebar.file_uploader("📂 Déposer l'export Excel (onglet 'Prestation')", type="xlsx", key="uploader_v11_1")
 
     st.title("👥 Pilotage du Flux Patients")
 
@@ -577,29 +573,31 @@ def render_stats_patients():
         return
 
     try:
-       @st.cache_data
+        @st.cache_data
         def get_full_analysis(file):
+            # Chargement et nettoyage des noms de colonnes
             df = pd.read_excel(file, sheet_name='Prestation')
             df.columns = [str(c).strip() for c in df.columns]
             
-            # --- CORRECTION DU BUG 1970 ---
-            # 1. On cherche dynamiquement la colonne qui contient "date"
+            # --- FIX BUG 1970 : Identification dynamique de la colonne date ---
+            # On cherche une colonne contenant 'date' au lieu de prendre l'index [0]
             date_cols = [c for c in df.columns if 'date' in str(c).lower()]
-            c_date = date_cols[0] if date_cols else df.columns[0] 
+            c_date = date_cols[0] if date_cols else df.columns[0]
             
+            # Identification des autres colonnes par index
             c_tarif, c_pat, c_mont = df.columns[2], df.columns[8], df.columns[11]
             
-            # 2. On utilise ta fonction de conversion robuste
+            # Conversion robuste avec votre fonction globale
             df[c_date] = df[c_date].apply(convertir_date)
             
-            # 3. Sécurité : on supprime les éventuelles dates aberrantes (comme 1970)
+            # Sécurité : on ignore les dates aberrantes (avant l'an 2000)
             df = df[df[c_date] >= pd.Timestamp('2000-01-01')]
-            # ------------------------------
             
             df[c_tarif] = df[c_tarif].astype(str).str.strip()
             
+            # Filtrage des prestations de recrutement (7301, 7311, 25.110)
             codes = ["7301", "7311", "25.110"]
-            df_f = df[(df[c_mont] > 0) & (df[c_tarif].isin(codes))].dropna(subset=[c_date, c_pat]).copy().copy()
+            df_f = df[(df[c_mont] > 0) & (df[c_tarif].isin(codes))].dropna(subset=[c_date, c_pat]).copy()
             
             # --- 1. CALCULS HISTORIQUES ---
             p_stats = df_f.groupby(c_pat).agg(
@@ -610,6 +608,8 @@ def render_stats_patients():
             
             p_stats['jours_vie'] = (p_stats['date_max'] - p_stats['date_min']).dt.days
             p_suivis = p_stats[p_stats['jours_vie'] >= 7]
+            
+            # Rythme hebdomadaire moyen
             rythme = p_suivis['nb_seances'].sum() / (p_suivis['jours_vie'].sum() / 7) if not p_suivis.empty else 1.1
 
             # --- 2. CALCUL DU FLUX RÉEL ---
@@ -617,9 +617,10 @@ def render_stats_patients():
             
             def stats_periode(jours):
                 seuil = derniere_date - timedelta(days=jours)
-                # Un patient est "nouveau" si sa toute première séance est dans la zone
+                # Un patient est "nouveau" si sa toute première séance est dans la période
                 nouveaux = p_stats[p_stats['date_min'] >= seuil]
                 count = len(nouveaux)
+                # On divise par le nombre de jours ouvrés théoriques (5j/7)
                 jours_ouvres = (jours / 7) * 5
                 return count, count / jours_ouvres if jours_ouvres > 0 else 0
 
@@ -641,8 +642,8 @@ def render_stats_patients():
         c_r2.metric("Derniers 60j", f"{data['flux_60'][0]} pat.", f"{data['flux_60'][1]:.1f} / jour")
         c_r3.metric("Derniers 120j", f"{data['flux_120'][0]} pat.", f"{data['flux_120'][1]:.1f} / jour")
 
-        # --- FORMULAIRE CONFIGURATION ---
-        with st.form("form_v11_1"):
+        # --- FORMULAIRE CONFIGURATION & SIMULATION ---
+        with st.form("form_v11_2"):
             st.subheader("⚙️ Simulation des besoins (Cabinets A & B)")
             if 'capa_df' not in st.session_state:
                 st.session_state.capa_df = pd.DataFrame([
@@ -655,7 +656,7 @@ def render_stats_patients():
 
             col_p1, col_p2 = st.columns(2)
             with col_p1:
-                in_seances = st.number_input("Séances / traitement", value=float(round(data['moy_seances'], 1)))
+                in_seances = st.number_input("Séances / traitement (moyenne)", value=float(round(data['moy_seances'], 1)))
                 in_rythme = st.slider("Rythme hebdomadaire", 0.5, 3.0, float(round(data['rythme_reel'], 1)))
             with col_p2:
                 in_occup = st.slider("Taux d'occupation visé (%)", 50, 100, 85)
@@ -664,43 +665,4 @@ def render_stats_patients():
             btn_go = st.form_submit_button("🚀 CALCULER ET COMPARER", use_container_width=True, type="primary")
 
         if btn_go:
-            st.session_state.capa_df = edited_df
-            
-            def calc_needs(df_p):
-                annuel = (df_p['Places/Sem'] * df_p['Semaines/an']).sum()
-                capa_h = (annuel * (in_occup/100)) / 52.14
-                flux_h = (capa_h * in_rythme) / in_seances
-                return capa_h, flux_h
-
-            df_act = edited_df[edited_df['Places/Sem'] > 0]
-            c_tot, f_tot = calc_needs(df_act)
-            c_a, f_a = calc_needs(df_act[df_act['Cabinet'] == "A"])
-            c_b, f_b = calc_needs(df_act[df_act['Cabinet'] == "B"])
-
-            st.markdown("---")
-            t_all, t_a, t_b = st.tabs(["📊 TOTAL GLOBAL", "🏠 CABINET A", "🏠 CABINET B"])
-
-            with t_all:
-                besoin_j = f_tot / in_jours
-                st.success(f"### Besoin Total : **{besoin_j:.1f}** nouveaux / jour")
-                diff = data['flux_60'][1] - besoin_j
-                st.metric("Équilibre (Réel 60j vs Théorique)", f"{data['flux_60'][1]:.1f} / jour", delta=round(diff, 1))
-
-            with t_a:
-                st.info(f"### Besoin A : **{(f_a/in_jours):.1f}** nouveaux / jour")
-                st.metric("Capacité Cible A", f"{c_a:.1f} RDV/sem")
-
-            with t_b:
-                st.warning(f"### Besoin B : **{(f_b/in_jours):.1f}** nouveaux / jour")
-                st.metric("Capacité Cible B", f"{c_b:.1f} RDV/sem")
-
-    except Exception as e:
-        st.error(f"❌ Erreur : {e}")
-
-# --- APPEL ---
-if 'page' not in st.session_state: st.session_state.page = "accueil"
-if st.session_state.page == "stats_patients": render_stats_patients()
-
-
-
-
+            st.session_state.capa_df
