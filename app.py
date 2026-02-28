@@ -582,7 +582,7 @@ def render_stats_patients():
             df = pd.read_excel(file, sheet_name='Prestation')
             df.columns = [str(c).strip() for c in df.columns]
             
-            c_date, c_tarif, c_pat, c_mont = df.columns[0], df.columns[2], df.columns[8], df.columns[11]
+            c_date, c_tarif, c_pat, c_mont = df.columns[1], df.columns[2], df.columns[8], df.columns[11]
             df[c_date] = pd.to_datetime(df[c_date], errors='coerce')
             df[c_tarif] = df[c_tarif].astype(str).str.strip()
             
@@ -688,5 +688,6 @@ def render_stats_patients():
 # --- APPEL ---
 if 'page' not in st.session_state: st.session_state.page = "accueil"
 if st.session_state.page == "stats_patients": render_stats_patients()
+
 
 
