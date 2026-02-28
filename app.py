@@ -484,7 +484,7 @@ elif st.session_state.page == "bilan":
                 st.warning(
                     f"⚠️ **Attention :** L'export chargé contient des données sur {len(annees)} années différentes "
                     f"({min(annees)} à {max(annees)}). Le bilan est conçu pour analyser un exercice comptable unique. "
-                    "Les données affichées ci-dessous sont filtrées selon l'année sélectionnée dans le menu de gauche."
+                    "Veuillez faire un export des prestations du 1er janvier au 31 décembre d'une seule année."
                 )
 
             annee = st.sidebar.selectbox("Année d'analyse :", annees)
@@ -688,5 +688,6 @@ def render_stats_patients():
 # --- APPEL ---
 if 'page' not in st.session_state: st.session_state.page = "accueil"
 if st.session_state.page == "stats_patients": render_stats_patients()
+
 
 
