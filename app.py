@@ -490,20 +490,42 @@ elif st.session_state.page == "medecins":
             df_m = df_m_init[(df_m_init["ca"] > 0) & (df_m_init["date_f"].notna()) & (df_m_init["date_f"] <= ajd) & (df_m_init["medecin"].notna())].copy()
             
             if not df_m.empty:
-                t_90j, t_365j = ajd - pd.DateOffset(days=90), ajd - pd.DateOffset(days=365)
-                # Jours où le cabinet avait au moins une prestation = jours d'ouverture réels
-                # (exclut automatiquement Noël, fermetures estivales, fériés cantonaux, etc.)
                 jours_cabinet = set(df_m["date_f"].dt.date.unique())
-                jo_90  = jours_ouvres(t_90j,  ajd, jours_cabinet)
-                jo_365 = jours_ouvres(t_365j, ajd, jours_cabinet)
+
+                # --- Sélecteur de méthode de tendance ---
+                st.markdown("### 📊 Méthode de calcul de tendance")
+                methode_tendance = st.radio(
+                    "Comparer les 90 derniers jours avec :",
+                    ["📅 Les 365 derniers jours (méthode actuelle)", "📆 Les mêmes 90 jours de l'année précédente (anti-saisonnalité)"],
+                    horizontal=True, key="methode_tendance"
+                )
+                annee_sur_annee = "précédente" in methode_tendance
+
+                t_90j = ajd - pd.DateOffset(days=90)
+                jo_90 = jours_ouvres(t_90j, ajd, jours_cabinet)
+
+                if annee_sur_annee:
+                    # Même fenêtre 90j, un an plus tôt
+                    t_ref_fin   = ajd   - pd.DateOffset(years=1)
+                    t_ref_debut = t_90j - pd.DateOffset(years=1)
+                    jo_ref = jours_ouvres(t_ref_debut, t_ref_fin, jours_cabinet)
+                    label_ref = "CA même période N-1"
+                    label_taux_ref = "Taux N-1 (CHF/j)"
+                    ca_ref = df_m[(df_m["date_f"] >= t_ref_debut) & (df_m["date_f"] <= t_ref_fin)].groupby("medecin")["ca"].sum().reset_index(name=label_ref)
+                else:
+                    t_365j = ajd - pd.DateOffset(days=365)
+                    jo_ref = jours_ouvres(t_365j, ajd, jours_cabinet)
+                    label_ref = "CA 365j"
+                    label_taux_ref = "Taux 365j (CHF/j)"
+                    ca_ref = df_m[df_m["date_f"] >= t_365j].groupby("medecin")["ca"].sum().reset_index(name=label_ref)
+
                 stats_ca = df_m.groupby("medecin")["ca"].sum().reset_index(name="CA Global")
                 ca_90 = df_m[df_m["date_f"] >= t_90j].groupby("medecin")["ca"].sum().reset_index(name="CA 90j")
-                ca_365 = df_m[df_m["date_f"] >= t_365j].groupby("medecin")["ca"].sum().reset_index(name="CA 365j")
-                tab_final = stats_ca.merge(ca_90, on="medecin", how="left").merge(ca_365, on="medecin", how="left").fillna(0)
-                tab_final["Taux 90j (CHF/j)"]  = (tab_final["CA 90j"]  / jo_90).round(1)
-                tab_final["Taux 365j (CHF/j)"] = (tab_final["CA 365j"] / jo_365).round(1)
+                tab_final = stats_ca.merge(ca_ref, on="medecin", how="left").merge(ca_90, on="medecin", how="left").fillna(0)
+                tab_final["Taux 90j (CHF/j)"]  = (tab_final["CA 90j"] / jo_90).round(1)
+                tab_final[label_taux_ref] = (tab_final[label_ref] / jo_ref).round(1)
                 tab_final["Tendance"] = tab_final.apply(
-                    lambda r: calculer_tendance(r["CA 90j"], r["CA 365j"], jo_90, jo_365), axis=1
+                    lambda r: calculer_tendance(r["CA 90j"], r[label_ref], jo_90, jo_ref), axis=1
                 )
 
                 st.markdown("### 🏆 Sélection et Visualisation")
@@ -529,7 +551,8 @@ elif st.session_state.page == "medecins":
                     trend_layer = base.transform_regression('M_Date', 'ca', groupby=['medecin']).mark_line(size=4, strokeDash=[6, 4])
                     chart = data_layer if visibility == "Données" else trend_layer if visibility == "Ligne" else data_layer + trend_layer
                     st.altair_chart(chart, use_container_width=True)
-                    st.dataframe(tab_final[tab_final["medecin"].isin(choix)].sort_values("CA Global", ascending=False)[["medecin", "Tendance", "CA Global", "CA 365j", "Taux 365j (CHF/j)", "CA 90j", "Taux 90j (CHF/j)"]], use_container_width=True, hide_index=True)
+                    cols_affichage = ["medecin", "Tendance", "CA Global", label_ref, label_taux_ref, "CA 90j", "Taux 90j (CHF/j)"]
+                    st.dataframe(tab_final[tab_final["medecin"].isin(choix)].sort_values("CA Global", ascending=False)[cols_affichage], use_container_width=True, hide_index=True)
         except Exception as e: st.error(f"Erreur technique : {e}")
 
 # ==========================================
