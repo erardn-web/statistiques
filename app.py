@@ -292,6 +292,9 @@ elif st.session_state.page == "factures":
                             df_plot.index = pd.CategoricalIndex(df_plot.index, categories=ordre_chrono, ordered=True)
                             st.line_chart(df_plot.sort_index())
                             st.dataframe(df_pv.loc[assur_sel].style.highlight_max(axis=1, color='#ff9999').highlight_min(axis=1, color='#99ff99'))
+                            
+                            except Exception as e:
+                st.error(f"Erreur lors du traitement du fichier : {e}")
 # ==========================================
 # 🩺 MODULE MÉDECINS (ORIGINAL)
 # ==========================================
@@ -728,6 +731,7 @@ def render_stats_patients():
 # --- APPEL ---
 if 'page' not in st.session_state: st.session_state.page = "accueil"
 if st.session_state.page == "stats_patients": render_stats_patients()
+
 
 
 
