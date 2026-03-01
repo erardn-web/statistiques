@@ -496,7 +496,7 @@ elif st.session_state.page == "medecins":
                 st.markdown("### 📊 Méthode de calcul de tendance")
                 methode_tendance = st.radio(
                     "Comparer les 90 derniers jours avec :",
-                    ["📅 Les 365 derniers jours (méthode actuelle)", "📆 Les mêmes 90 jours de l'année précédente (anti-saisonnalité)"],
+                    ["📅 Les 90 derniers jours vs les 365 derniers jours", "📆 Les mêmes 90 jours de l'année précédente (anti-saisonnalité)"],
                     horizontal=True, key="methode_tendance"
                 )
                 annee_sur_annee = "précédente" in methode_tendance
@@ -778,3 +778,4 @@ elif st.session_state.page == "stats_patients":
     render_stats_patients()
 
 # ==========================================
+
