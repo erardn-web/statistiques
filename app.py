@@ -11,9 +11,12 @@ st.set_page_config(page_title="Analyseur de Facturation Pro", layout="wide", pag
 MOTS_EXCLUSION = {"BERNOIS", "NEUCHATELOIS", "VALAISANS", "GENEVOIS", "VAUDOIS", "FRIBOURGEOIS"}
 COULEURS_PROF = {"Physiothérapie": "#00CCFF", "Ergothérapie": "#FF9900", "Massage": "#00CC96", "Autre": "#AB63FA"}
 
-def jours_ouvres(date_debut, date_fin):
-    """Nombre de jours ouvrés lun-ven entre deux dates (sans gestion des fériés cantonaux,
-    mais élimine déjà l'essentiel des biais weekends/ponts)."""
+def jours_ouvres(date_debut, date_fin, jours_cabinet=None):
+    """Nombre de jours où le cabinet était réellement ouvert entre deux dates.
+    Si jours_cabinet (set de date) est fourni, on compte les jours avec prestations.
+    Sinon, repli sur lun-ven (bdate_range) pour les modules sans ce contexte."""
+    if jours_cabinet is not None:
+        return max(sum(1 for d in pd.date_range(date_debut, date_fin) if d.date() in jours_cabinet), 1)
     return max(len(pd.bdate_range(date_debut, date_fin)), 1)
 
 def calculer_tendance(ca_90j, ca_365j, jo_90, jo_365):
@@ -488,8 +491,11 @@ elif st.session_state.page == "medecins":
             
             if not df_m.empty:
                 t_90j, t_365j = ajd - pd.DateOffset(days=90), ajd - pd.DateOffset(days=365)
-                jo_90  = jours_ouvres(t_90j,  ajd)
-                jo_365 = jours_ouvres(t_365j, ajd)
+                # Jours où le cabinet avait au moins une prestation = jours d'ouverture réels
+                # (exclut automatiquement Noël, fermetures estivales, fériés cantonaux, etc.)
+                jours_cabinet = set(df_m["date_f"].dt.date.unique())
+                jo_90  = jours_ouvres(t_90j,  ajd, jours_cabinet)
+                jo_365 = jours_ouvres(t_365j, ajd, jours_cabinet)
                 stats_ca = df_m.groupby("medecin")["ca"].sum().reset_index(name="CA Global")
                 ca_90 = df_m[df_m["date_f"] >= t_90j].groupby("medecin")["ca"].sum().reset_index(name="CA 90j")
                 ca_365 = df_m[df_m["date_f"] >= t_365j].groupby("medecin")["ca"].sum().reset_index(name="CA 365j")
