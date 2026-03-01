@@ -99,6 +99,11 @@ def render_stats_patients():
         min_value=14, max_value=180, value=60, step=7,
         help="Un patient dont la dernière séance date de plus de N jours est considéré comme terminé. Utilisé pour calculer la moyenne de séances/traitement."
     )
+    seuil_jour_flux = st.sidebar.number_input(
+        "Montant min. pour jour ouvert (CHF) :",
+        min_value=0, max_value=500, value=50, step=10, key="seuil_flux",
+        help="Somme minimale facturée sur la journée pour qu'elle soit comptée comme jour ouvré."
+    )
 
     st.title("👥 Pilotage du Flux Patients")
 
@@ -114,24 +119,33 @@ def render_stats_patients():
             return df
 
         @st.cache_data
-        def get_full_analysis(file1, file2, delai_fin):
+        def get_full_analysis(file1, file2, delai_fin, seuil_jour):
             def parser(f):
                 df = lire_prestations(f)
                 c_date, c_tarif, c_pat, c_mont = df.columns[1], df.columns[2], df.columns[8], df.columns[11]
                 df[c_date] = pd.to_datetime(df[c_date], errors='coerce')
                 df[c_tarif] = df[c_tarif].astype(str).str.strip()
+                df[c_mont] = pd.to_numeric(df[c_mont], errors='coerce').fillna(0)
+                # CA journalier sur TOUTES les prestations (pour jours ouvrés réels)
+                ca_jour = df[df[c_mont] > 0].dropna(subset=[c_date]).copy()
+                ca_jour = ca_jour.groupby(ca_jour[c_date].dt.date)[c_mont].sum()
+                # Patients nouveaux : codes bilan uniquement
                 codes = ["7301", "7311", "25.110"]
                 df_f = df[(df[c_mont] > 0) & (df[c_tarif].isin(codes))].dropna(subset=[c_date, c_pat]).copy()
                 df_f = df_f.rename(columns={c_date: "_date", c_pat: "_pat"})
-                return df_f[["_date", "_pat"]]
+                return df_f[["_date", "_pat"]], ca_jour
 
-            df_f = parser(file1)
+            df_f, ca_jour = parser(file1)
             if file2 is not None:
-                df_f2 = parser(file2)
+                df_f2, ca_jour2 = parser(file2)
                 df_f = pd.concat([df_f, df_f2]).drop_duplicates().reset_index(drop=True)
+                ca_jour = pd.concat([ca_jour, ca_jour2]).groupby(level=0).sum()
                 nb_fichiers = 2
             else:
                 nb_fichiers = 1
+
+            # Jours ouvrés réels : jours où le CA total >= seuil_jour
+            jours_cabinet_flux = set(ca_jour[ca_jour >= seuil_jour].index)
 
             df_f = df_f.sort_values("_date")
             derniere_date = df_f["_date"].max()
@@ -166,7 +180,7 @@ def render_stats_patients():
                 seuil = derniere_date - timedelta(days=jours)
                 nouveaux = p_stats[(p_stats['date_min'] >= seuil) & (p_stats['date_min'] > seuil_fantomes)]
                 count = len(nouveaux)
-                jo = jours_ouvres(seuil, derniere_date)
+                jo = jours_ouvres(seuil, derniere_date, jours_cabinet_flux)
                 return count, count / jo if jo > 0 else 0
 
             return {
@@ -182,7 +196,7 @@ def render_stats_patients():
                 "delai_fin": delai_fin,
             }
 
-        data = get_full_analysis(uploaded_file, uploaded_file2, delai_fin_traitement)
+        data = get_full_analysis(uploaded_file, uploaded_file2, delai_fin_traitement, seuil_jour_flux)
 
         # --- INFOS EXPORT ---
         periode = f"{data['premiere_date'].strftime('%d.%m.%Y')} → {data['derniere_date'].strftime('%d.%m.%Y')}"
