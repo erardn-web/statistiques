@@ -467,6 +467,7 @@ elif st.session_state.page == "medecins":
             st.sidebar.header("🔍 Filtres")
             fourn_med = sorted(df_brut.iloc[:, 9].dropna().unique().tolist())
             sel_fourn_med = st.sidebar.multiselect("Fournisseurs :", fourn_med, default=fourn_med)
+            seuil_jour_med = st.sidebar.number_input("Montant min. pour jour ouvert (CHF) :", min_value=0, max_value=500, value=50, step=10, key="seuil_med")
             df_m_init = df_brut[df_brut.iloc[:, 5].astype(str).str.upper() != "TG"].copy()
             df_m_init = df_m_init[df_m_init.iloc[:, 9].isin(sel_fourn_med)]
 
@@ -496,7 +497,8 @@ elif st.session_state.page == "medecins":
             df_m = df_m_init[(df_m_init["ca"] > 0) & (df_m_init["date_f"].notna()) & (df_m_init["date_f"] <= ajd) & (df_m_init["medecin"].notna())].copy()
             
             if not df_m.empty:
-                jours_cabinet = set(df_m["date_f"].dt.date.unique())
+                ca_par_jour = df_m.groupby(df_m["date_f"].dt.date)["ca"].sum()
+                jours_cabinet = set(ca_par_jour[ca_par_jour >= seuil_jour_med].index)
 
                 # --- Sélecteur de méthode de tendance ---
                 st.markdown("### 📊 Méthode de calcul de tendance")
@@ -603,6 +605,7 @@ elif st.session_state.page == "tarifs":
 
             # --- FILTRAGE ---
             st.sidebar.header("⚙️ Filtres")
+            seuil_jour_tar = st.sidebar.number_input("Montant min. pour jour ouvert (CHF) :", min_value=0, max_value=500, value=50, step=10, key="seuil_tar")
             professions_dispo = sorted(df['Profession'].unique())
             metiers_actifs = [p for p in professions_dispo if st.sidebar.checkbox(p, value=True, key=f"t_check_{p}")]
 
@@ -646,7 +649,8 @@ elif st.session_state.page == "tarifs":
                 # 2. TABLEAU DES TENDANCES
                 st.markdown(f"### 📈 Performance par Tarif (Base : {reference_date.strftime('%d.%m.%Y')})")
 
-                jours_cabinet_t = set(df[nom_col_date].dt.date.unique())  # Jours réels du cabinet, indépendants des filtres actifs
+                ca_par_jour_t = df.groupby(df[nom_col_date].dt.date)[nom_col_somme].sum()
+                jours_cabinet_t = set(ca_par_jour_t[ca_par_jour_t >= seuil_jour_tar].index)  # Jours réels du cabinet avec min de facturation
                 annee_sur_annee_t = "précédente" in methode_tarif
 
                 t_90j = reference_date - pd.DateOffset(days=90)
