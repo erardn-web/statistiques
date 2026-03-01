@@ -413,11 +413,13 @@ elif st.session_state.page == "factures":
                         assureurs_disponibles = [a for a in tous_assureurs if a in df_pv.index]
                         defaut_sel = assureurs_disponibles[:nb_top] if nb_top else assureurs_disponibles
 
+                        # Le key change selon le top choisi → force Streamlit à re-rendre
+                        # le multiselect avec le bon default à chaque changement de top
                         assur_sel = st.multiselect(
                             "Sélectionner les assureurs :",
                             options=df_pv.index.tolist(),
                             default=defaut_sel,
-                            key="evol_assureurs"
+                            key=f"evol_assureurs_{top_choix}"
                         )
                         if assur_sel:
                             df_plot = df_pv.loc[assur_sel].T
