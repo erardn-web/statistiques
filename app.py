@@ -138,7 +138,7 @@ if st.session_state.page == "accueil":
     st.info("💡 **Conseil :** Utilisez l'export Excel complet pour garantir la précision des calculs.")
 
 # ==========================================
-# 📊 MODULE FACTURATION (SOURCE : EXPORT FACTURES)
+# 📊 MODULE FACTURATION
 # ==========================================
 elif st.session_state.page == "factures":
     st.title("📊 Analyse de la Facturation")
@@ -152,7 +152,7 @@ elif st.session_state.page == "factures":
         try:
             df_brut = pd.read_excel(uploaded_file)
             
-            # Nettoyage et conversion
+            # --- Garder ta logique de colonnes d'origine ---
             df = df_brut.copy()
             df["date_facture"] = df.iloc[:, 3].apply(convertir_date)
             df["date_paiement"] = df.iloc[:, 18].apply(convertir_date)
@@ -162,25 +162,19 @@ elif st.session_state.page == "factures":
             
             ajd = pd.to_datetime(datetime.now().date())
 
-            # --- ONGLETS ---
             tab1, tab2, tab3, tab4 = st.tabs(["💰 Liquidités", "⏳ Délais Assureurs", "⚠️ Retards", "📈 Évolution"])
 
             with tab1:
-                st.subheader("Prévisions de Liquidités (Probabilités)")
-                # Calcul des liquidités par fournisseur
+                st.subheader("Prévisions de Liquidités")
                 def calculer_liquidites_fournisseur(data, date_ref):
                     ouvertes = data[data["date_paiement"].isna()].copy()
                     ouvertes["jours_attente"] = (date_ref - ouvertes["date_facture"]).dt.days
-                    
                     hist = data[data["date_paiement"].notna()].copy()
                     hist["delai"] = (hist["date_paiement"] - hist["date_facture"]).dt.days
-                    
-                    # Probabilités simplifiées
                     def proba(j):
                         if j < 15: return 0.8
                         if j < 30: return 0.5
                         return 0.2
-                    
                     ouvertes["proba"] = ouvertes["jours_attente"].apply(proba)
                     ouvertes["attendu"] = ouvertes["montant"] * ouvertes["proba"]
                     return ouvertes.groupby("fournisseur")["attendu"].sum()
@@ -194,7 +188,7 @@ elif st.session_state.page == "factures":
                 df_paye = df[df["date_paiement"].notna()].copy()
                 df_paye["delai"] = (df_paye["date_paiement"] - df_paye["date_facture"]).dt.days
                 delai_moy = df_paye.groupby("assureur")["delai"].mean().sort_values(ascending=False)
-                st.dataframe(delai_moy.rename("Délai moyen (jours)"))
+                st.dataframe(delai_moy)
 
             with tab3:
                 st.subheader("Factures en Souffrance (> 30 jours)")
@@ -203,37 +197,28 @@ elif st.session_state.page == "factures":
                     st.warning(f"Total en retard : {retards['montant'].sum():,.2f} CHF")
                     st.table(retards[["date_facture", "assureur", "fournisseur", "montant"]].head(20))
                 else:
-                    st.success("Aucun retard important détecté.")
+                    st.success("Aucun retard détecté.")
 
             with tab4:
                 st.subheader("📈 Évolution du délai de remboursement")
                 
-                # --- Système de Top dynamique ---
-                col_top, col_vide = st.columns([1, 2])
-                with col_top:
-                    choix_top = st.selectbox(
-                        "Affichage rapide :", 
-                        ["Top 5", "Top 10", "Top 20", "Global (Tous)"], 
-                        index=0
-                    )
+                # --- AJOUT DU FILTRE TOP ---
+                col_sel, _ = st.columns([1, 2])
+                with col_sel:
+                    choix_top = st.selectbox("Sélection rapide :", ["Top 5", "Top 10", "Top 20", "Tous"], index=0)
 
                 ordre_chrono = ["Global", "6 mois", "4 mois", "3 mois", "2 mois"]
                 periodes_graph = {"Global": None, "6 mois": 6, "4 mois": 4, "3 mois": 3, "2 mois": 2}
                 evol_data = []
+                
+                # Calcul des tops par volume
                 p_hist_global = df[df["date_paiement"].notna()].copy()
+                tous_assur = p_hist_global.groupby("assureur").size().sort_values(ascending=False).index.tolist()
                 
-                # Classement des assureurs par volume de factures
-                tous_les_assureurs = p_hist_global.groupby("assureur").size().sort_values(ascending=False).index.tolist()
-                
-                if choix_top == "Top 5":
-                    top_assurances = tous_les_assureurs[:5]
-                elif choix_top == "Top 10":
-                    top_assurances = tous_les_assureurs[:10]
-                elif choix_top == "Top 20":
-                    top_assurances = tous_les_assureurs[:20]
-                else:
-                    top_assurances = tous_les_assureurs
-                
+                mapping_top = {"Top 5": 5, "Top 10": 10, "Top 20": 20, "Tous": len(tous_assur)}
+                n_top = mapping_top[choix_top]
+                selection_defaut = tous_assur[:n_top]
+
                 for n, v in periodes_graph.items():
                     lim = ajd - pd.DateOffset(months=v) if v else df["date_facture"].min()
                     h_tmp = df[(df["date_paiement"].notna()) & (df["date_facture"] >= lim)].copy()
@@ -242,27 +227,28 @@ elif st.session_state.page == "factures":
                         m = h_tmp.groupby("assureur")["delai"].mean().reset_index()
                         m["Période"] = n
                         evol_data.append(m)
-                        
+                
                 if evol_data:
                     df_ev = pd.concat(evol_data)
                     df_pv = df_ev.pivot(index="assureur", columns="Période", values="delai")
                     cols_presentes = [c for c in ordre_chrono if c in df_pv.columns]
                     df_pv = df_pv[cols_presentes]
                     
+                    # Le multiselect utilise maintenant la sélection par défaut dynamique
                     assur_sel = st.multiselect(
-                        "Modifier la sélection des assureurs :", 
+                        "Assureurs à comparer :", 
                         options=df_pv.index.tolist(), 
-                        default=[a for a in top_assurances if a in df_pv.index]
+                        default=[a for a in selection_defaut if a in df_pv.index]
                     )
                     
                     if assur_sel:
                         df_plot = df_pv.loc[assur_sel].T
                         df_plot.index = pd.CategoricalIndex(df_plot.index, categories=ordre_chrono, ordered=True)
                         st.line_chart(df_plot.sort_index())
-                        st.dataframe(df_pv.loc[assur_sel].style.highlight_max(axis=1, color='#ff9999').highlight_min(axis=1, color='#99ff99'))
+                        st.dataframe(df_pv.loc[assur_sel])
 
         except Exception as e:
-            st.error(f"Erreur lors de l'analyse : {e}")
+            st.error(f"Erreur lors du traitement : {e}")
 # ==========================================
 # 🩺 MODULE MÉDECINS (ORIGINAL)
 # ==========================================
@@ -699,6 +685,7 @@ def render_stats_patients():
 # --- APPEL ---
 if 'page' not in st.session_state: st.session_state.page = "accueil"
 if st.session_state.page == "stats_patients": render_stats_patients()
+
 
 
 
