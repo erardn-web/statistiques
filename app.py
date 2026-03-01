@@ -41,7 +41,8 @@ def assigner_profession(code):
     """Logique métier spécifique au module Tarifs"""
     c = str(code).strip().lower()
     if 'rem' in c: return "Autre"
-    if any(x in c for x in ['privé', 'abo', 'thais']) or c.startswith(('73', '25', '15.30')): 
+    if any(x in c for x in ['abo', 'thais']): return "Autre"
+    if any(x in c for x in ['privé']) or c.startswith(('73', '25', '15.30')): 
         return "Physiothérapie"
     if any(x in c for x in ['foyer']) or c.startswith(('76', '31', '32')): 
         return "Ergothérapie"
@@ -496,7 +497,7 @@ elif st.session_state.page == "medecins":
                 st.markdown("### 📊 Méthode de calcul de tendance")
                 methode_tendance = st.radio(
                     "Comparer les 90 derniers jours avec :",
-                    ["📅 Les 90 derniers jours vs les 365 derniers jours", "📆 Les mêmes 90 jours de l'année précédente (anti-saisonnalité)"],
+                    ["📅 Les 365 derniers jours (méthode actuelle)", "📆 Les mêmes 90 jours de l'année précédente (anti-saisonnalité)"],
                     horizontal=True, key="methode_tendance"
                 )
                 annee_sur_annee = "précédente" in methode_tendance
@@ -571,6 +572,7 @@ elif st.session_state.page == "tarifs":
             ong_p = next((s for s in pd.ExcelFile(uploaded_file).sheet_names if 'Prestation' in s or 'prestation' in s.lower()), 'Prestation')
             df = pd.read_excel(uploaded_file, sheet_name=ong_p)
             nom_col_code = df.columns[2]   # C (Tarif)
+            nom_col_nom  = df.columns[3]   # D (Nom de la prestation)
             nom_col_somme = df.columns[11] # L (Montant)
             date_cols = [c for c in df.columns if 'Date' in str(c)]
             nom_col_date = date_cols[0] if date_cols else df.columns[0]
@@ -642,18 +644,28 @@ elif st.session_state.page == "tarifs":
                 stats_global = df_filtered.groupby(nom_col_code)[nom_col_somme].sum().reset_index(name="CA Global")
                 ca_90 = df_filtered[df_filtered[nom_col_date] >= t_90j].groupby(nom_col_code)[nom_col_somme].sum().reset_index(name="CA 90j")
                 ca_365 = df_filtered[df_filtered[nom_col_date] >= t_365j].groupby(nom_col_code)[nom_col_somme].sum().reset_index(name="CA 365j")
-                
-                tab_perf = stats_global.merge(ca_365, on=nom_col_code, how="left").merge(ca_90, on=nom_col_code, how="left").fillna(0)
+
+                # Nom de la prestation : on prend le nom le plus fréquent pour chaque code
+                noms_prestation = (
+                    df_filtered.groupby(nom_col_code)[nom_col_nom]
+                    .agg(lambda x: x.mode().iloc[0] if not x.mode().empty else "")
+                    .reset_index()
+                    .rename(columns={nom_col_nom: "Prestation"})
+                )
+
+                tab_perf = stats_global.merge(noms_prestation, on=nom_col_code, how="left")
+                tab_perf = tab_perf.merge(ca_365, on=nom_col_code, how="left").merge(ca_90, on=nom_col_code, how="left").fillna(0)
                 tab_perf["Tendance"] = tab_perf.apply(
                     lambda r: calculer_tendance(r["CA 90j"], r["CA 365j"], jo_90, jo_365), axis=1
                 )
-                
+
                 st.dataframe(
-                    tab_perf.sort_values("CA Global", ascending=False),
+                    tab_perf[[nom_col_code, "Prestation", "Tendance", "CA Global", "CA 365j", "CA 90j"]].sort_values("CA Global", ascending=False),
                     use_container_width=True,
                     hide_index=True,
                     column_config={
-                        nom_col_code: "Code Tarifaire",
+                        nom_col_code: "Code",
+                        "Prestation": "Nom de la prestation",
                         "CA Global": st.column_config.NumberColumn("CA Global", format="%.2f CHF"),
                         "CA 365j": st.column_config.NumberColumn("CA 365j", format="%.2f CHF"),
                         "CA 90j": st.column_config.NumberColumn("CA 90j", format="%.2f CHF")
@@ -778,4 +790,3 @@ elif st.session_state.page == "stats_patients":
     render_stats_patients()
 
 # ==========================================
-
