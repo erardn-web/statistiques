@@ -664,43 +664,58 @@ elif st.session_state.page == "tarifs":
                     label_ref   = "CA 365j"
                     ca_ref = df_filtered[df_filtered[nom_col_date] >= t_365j].groupby(nom_col_code)[nom_col_somme].sum().reset_index(name=label_ref)
 
-                stats_global = df_filtered.groupby(nom_col_code)[nom_col_somme].sum().reset_index(name="CA Global")
-                ca_90 = df_filtered[df_filtered[nom_col_date] >= t_90j].groupby(nom_col_code)[nom_col_somme].sum().reset_index(name="CA 90j")
-
-                # Nom de la prestation : on prend le nom le plus fréquent pour chaque code
-                noms_prestation = (
-                    df_filtered.groupby(nom_col_code)[nom_col_nom]
-                    .agg(lambda x: x.mode().iloc[0] if not x.mode().empty else "")
-                    .reset_index()
-                    .rename(columns={nom_col_nom: "Prestation"})
-                )
-
                 label_taux_ref = "Taux N-1 (CHF/j)" if annee_sur_annee_t else "Taux 365j (CHF/j)"
 
-                tab_perf = stats_global.merge(noms_prestation, on=nom_col_code, how="left")
-                tab_perf = tab_perf.merge(ca_ref, on=nom_col_code, how="left").merge(ca_90, on=nom_col_code, how="left").fillna(0)
-                tab_perf["Taux 90j (CHF/j)"]   = (tab_perf["CA 90j"]      / jo_90).round(1)
-                tab_perf[label_taux_ref]        = (tab_perf[label_ref]     / jo_ref).round(1)
+                # --- Groupement selon le mode d'affichage ---
+                group_col = "Profession" if view_mode == "Profession" else nom_col_code
+
+                if annee_sur_annee_t:
+                    ca_ref_g = df_filtered[(df_filtered[nom_col_date] >= t_ref_debut) & (df_filtered[nom_col_date] <= t_ref_fin)].groupby(group_col)[nom_col_somme].sum().reset_index(name=label_ref)
+                else:
+                    ca_ref_g = df_filtered[df_filtered[nom_col_date] >= t_365j].groupby(group_col)[nom_col_somme].sum().reset_index(name=label_ref)
+
+                stats_global = df_filtered.groupby(group_col)[nom_col_somme].sum().reset_index(name="CA Global")
+                ca_90_g      = df_filtered[df_filtered[nom_col_date] >= t_90j].groupby(group_col)[nom_col_somme].sum().reset_index(name="CA 90j")
+
+                tab_perf = stats_global.merge(ca_ref_g, on=group_col, how="left").merge(ca_90_g, on=group_col, how="left").fillna(0)
+                tab_perf["Taux 90j (CHF/j)"] = (tab_perf["CA 90j"]  / jo_90).round(1)
+                tab_perf[label_taux_ref]      = (tab_perf[label_ref] / jo_ref).round(1)
                 tab_perf["Tendance"] = tab_perf.apply(
                     lambda r: calculer_tendance(r["CA 90j"], r[label_ref], jo_90, jo_ref), axis=1
                 )
 
+                # Pour le mode code : ajouter le nom de la prestation en tooltip
+                if view_mode != "Profession":
+                    noms_prestation = (
+                        df_filtered.groupby(nom_col_code)[nom_col_nom]
+                        .agg(lambda x: x.mode().iloc[0] if not x.mode().empty else "")
+                        .reset_index().rename(columns={nom_col_nom: "Prestation"})
+                    )
+                    tab_perf = tab_perf.merge(noms_prestation, on=nom_col_code, how="left")
+
                 tab_sorted = tab_perf.sort_values("CA Global", ascending=False)
 
                 def tendance_html(t):
-                    if "Hausse" in t:   color = "#1a7f3c"
-                    elif "Baisse" in t: color = "#c0392b"
+                    if "Hausse" in t:    color = "#1a7f3c"
+                    elif "Baisse" in t:  color = "#c0392b"
                     elif "Nouveau" in t: color = "#0066cc"
-                    else:               color = "#666666"
+                    else:                color = "#666666"
                     return f'<span style="color:{color};font-weight:600">{t}</span>'
+
+                COULEURS_PROF_HEX = {"Physiothérapie": "#00CCFF", "Ergothérapie": "#FF9900", "Massage": "#00CC96", "Autre": "#AB63FA"}
 
                 rows = ""
                 for _, r in tab_sorted.iterrows():
-                    code = str(r[nom_col_code])
-                    nom  = str(r["Prestation"])
+                    val = str(r[group_col])
+                    if view_mode == "Profession":
+                        hex_c = COULEURS_PROF_HEX.get(val, "#888")
+                        first_cell = f'<td><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:{hex_c};margin-right:6px"></span>{val}</td>'
+                    else:
+                        nom = str(r.get("Prestation", ""))
+                        first_cell = f'<td><span title="{nom}" style="cursor:help;border-bottom:1px dotted #999">{val}</span></td>'
                     rows += (
                         f'<tr>'
-                        f'<td><span title="{nom}" style="cursor:help;border-bottom:1px dotted #999">{code}</span></td>'
+                        f'{first_cell}'
                         f'<td>{tendance_html(r["Tendance"])}</td>'
                         f'<td style="text-align:right">{r["CA Global"]:,.2f}</td>'
                         f'<td style="text-align:right">{r[label_ref]:,.2f}</td>'
@@ -709,6 +724,9 @@ elif st.session_state.page == "tarifs":
                         f'<td style="text-align:right">{r["Taux 90j (CHF/j)"]:,.2f}</td>'
                         f'</tr>'
                     )
+
+                first_col_header = "Profession" if view_mode == "Profession" else "Code"
+                tooltip_note = "" if view_mode == "Profession" else "<p style='font-size:0.75rem;color:#999;margin-top:4px'>ℹ️ Survolez le code pour voir le nom de la prestation</p>"
 
                 html_table = (
                     "<style>"
@@ -721,13 +739,12 @@ elif st.session_state.page == "tarifs":
                     "</style>"
                     "<table class='tarif-table'>"
                     "<thead><tr>"
-                    "<th>Code</th><th>Tendance</th>"
+                    f"<th>{first_col_header}</th><th>Tendance</th>"
                     f"<th>CA Global (CHF)</th><th>{label_ref} (CHF)</th><th>{label_taux_ref}</th><th>CA 90j (CHF)</th><th>Taux 90j (CHF/j)</th>"
                     "</tr></thead>"
                     f"<tbody>{rows}</tbody>"
                     "</table>"
-                    "<p style='font-size:0.75rem;color:#999;margin-top:4px'>"
-                    "ℹ️ Survolez le code pour voir le nom de la prestation</p>"
+                    f"{tooltip_note}"
                 )
                 st.markdown(html_table, unsafe_allow_html=True)
             else:
