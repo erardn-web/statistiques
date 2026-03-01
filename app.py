@@ -512,23 +512,9 @@ elif st.session_state.page == "medecins":
                 t_90j = ajd - pd.DateOffset(days=90)
                 jo_90 = jours_ouvres(t_90j, ajd, jours_cabinet)
 
-                date_min_export = df_m["date_f"].min()
-
                 if annee_sur_annee:
                     t_ref_fin   = ajd   - pd.DateOffset(years=1)
                     t_ref_debut = t_90j - pd.DateOffset(years=1)
-                    # Vérifier que toute la fenêtre N-1 (début ET fin) est dans l'export
-                    if t_ref_debut < date_min_export or t_ref_fin < date_min_export:
-                        jours_manquants = (date_min_export - min(t_ref_debut, t_ref_fin)).days
-                        st.warning(
-                            f"⚠️ **Période N-1 non couverte** : la fenêtre de référence s'étend du "
-                            f"{t_ref_debut.strftime('%d.%m.%Y')} au {t_ref_fin.strftime('%d.%m.%Y')}, "
-                            f"mais votre export ne commence que le {date_min_export.strftime('%d.%m.%Y')} "
-                            f"(il manque ~{jours_manquants} jours). "
-                            "Bascule automatique sur la méthode 365j."
-                        )
-                        annee_sur_annee = False
-
                 if annee_sur_annee:
                     jo_ref = jours_ouvres(t_ref_debut, t_ref_fin, jours_cabinet)
                     label_ref = "CA même période N-1"
@@ -670,22 +656,9 @@ elif st.session_state.page == "tarifs":
                 t_90j = reference_date - pd.DateOffset(days=90)
                 jo_90 = jours_ouvres(t_90j, reference_date, jours_cabinet_t)
 
-                date_min_export_t = df[nom_col_date].min()
-
                 if annee_sur_annee_t:
                     t_ref_fin   = reference_date - pd.DateOffset(years=1)
                     t_ref_debut = t_90j          - pd.DateOffset(years=1)
-                    if t_ref_debut < date_min_export_t or t_ref_fin < date_min_export_t:
-                        jours_manquants_t = (date_min_export_t - min(t_ref_debut, t_ref_fin)).days
-                        st.warning(
-                            f"⚠️ **Période N-1 non couverte** : la fenêtre de référence s'étend du "
-                            f"{t_ref_debut.strftime('%d.%m.%Y')} au {t_ref_fin.strftime('%d.%m.%Y')}, "
-                            f"mais votre export ne commence que le {date_min_export_t.strftime('%d.%m.%Y')} "
-                            f"(il manque ~{jours_manquants_t} jours). "
-                            "Bascule automatique sur la méthode 365j."
-                        )
-                        annee_sur_annee_t = False
-
                 if annee_sur_annee_t:
                     jo_ref      = jours_ouvres(t_ref_debut, t_ref_fin, jours_cabinet_t)
                     label_ref   = "CA même période N-1"
