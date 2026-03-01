@@ -223,6 +223,7 @@ def render_stats_patients():
             rythme = pd.Series(rythmes_ep).mean() if rythmes_ep else 1.1
 
             # --- 3. CHRONIQUES & MOYENNE SÉANCES/TRAITEMENT ---
+            seuil_termine = derniere_date - timedelta(days=delai_fin)
             # Épisodes encore actifs (fin récente = en cours)
             ep_en_cours = df_ep[df_ep["fin"] > seuil_termine]
             ep_termines  = df_ep[df_ep["fin"] <= seuil_termine]
