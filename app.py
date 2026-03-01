@@ -105,6 +105,7 @@ def render_stats_patients():
         help="Somme minimale facturée sur la journée pour qu'elle soit comptée comme jour ouvré."
     )
 
+
     st.title("👥 Pilotage du Flux Patients")
 
     if not uploaded_file:
@@ -222,15 +223,18 @@ def render_stats_patients():
             rythme = pd.Series(rythmes_ep).mean() if rythmes_ep else 1.1
 
             # --- 3. CHRONIQUES & MOYENNE SÉANCES/TRAITEMENT ---
-            SEUIL_CHRONIQUE = 52  # séances sans pause = patient chronique
-            seuil_termine = derniere_date - timedelta(days=delai_fin)
-
             # Épisodes encore actifs (fin récente = en cours)
             ep_en_cours = df_ep[df_ep["fin"] > seuil_termine]
             ep_termines  = df_ep[df_ep["fin"] <= seuil_termine]
 
-            # Chroniques actifs = épisodes en cours avec déjà >= SEUIL_CHRONIQUE séances
-            chroniques_actifs = ep_en_cours[ep_en_cours["nb_seances"] >= SEUIL_CHRONIQUE]
+            # Chroniques actifs = épisodes en cours satisfaisant au moins une condition :
+            #   1. Présents sur les 365 derniers jours (début <= derniere_date - 365j)
+            #   2. Episode avec >=45 séances
+            seuil_365_chron = derniere_date - timedelta(days=365)
+            chroniques_actifs = ep_en_cours[
+                (ep_en_cours["debut"] <= seuil_365_chron) |
+                (ep_en_cours["nb_seances"] >= 45)
+            ]
             nb_chroniques = len(chroniques_actifs)
 
             # Cadence hebdomadaire des chroniques (sur les 90 derniers jours de l'export)
