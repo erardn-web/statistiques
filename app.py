@@ -713,9 +713,10 @@ elif st.session_state.page == "tarifs":
                 html_table = (
                     "<style>"
                     ".tarif-table{width:100%;border-collapse:collapse;font-size:0.9rem}"
-                    ".tarif-table th{background:#f0f2f6;padding:8px 12px;text-align:left;border-bottom:2px solid #ddd;white-space:nowrap}"
+                    ".tarif-table th{background:#f0f2f6;padding:8px 12px;text-align:left;border-bottom:2px solid #ddd;vertical-align:bottom;min-width:60px}"
                     ".tarif-table th:nth-child(n+3){text-align:right}"
-                    ".tarif-table td{padding:6px 12px;border-bottom:1px solid #eee}"
+                    ".tarif-table td{padding:6px 12px;border-bottom:1px solid #eee;white-space:nowrap}"
+                    ".tarif-table td:nth-child(n+3){text-align:right}"
                     ".tarif-table tr:hover td{background:#f8f9fa}"
                     "</style>"
                     "<table class='tarif-table'>"
