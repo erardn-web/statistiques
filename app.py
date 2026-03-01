@@ -384,7 +384,11 @@ elif st.session_state.page == "factures":
                     periodes_graph = {"Global": None, "6 mois": 6, "4 mois": 4, "3 mois": 3, "2 mois": 2}
                     evol_data = []
                     p_hist_global = df[df["date_paiement"].notna()].copy()
-                    top_assurances = p_hist_global.groupby("assureur").size().sort_values(ascending=False).head(5).index.tolist()
+                    p_hist_global["delai"] = (p_hist_global["date_paiement"] - p_hist_global["date_facture"]).dt.days
+                    # Classement global par volume de factures (base pour les tops)
+                    ranking_assureurs = p_hist_global.groupby("assureur").size().sort_values(ascending=False)
+                    tous_assureurs = ranking_assureurs.index.tolist()
+
                     for n, v in periodes_graph.items():
                         lim = ajd - pd.DateOffset(months=v) if v else df["date_facture"].min()
                         h_tmp = df[(df["date_paiement"].notna()) & (df["date_facture"] >= lim)].copy()
@@ -393,12 +397,28 @@ elif st.session_state.page == "factures":
                             m = h_tmp.groupby("assureur")["delai"].mean().reset_index()
                             m["Période"] = n
                             evol_data.append(m)
+
                     if evol_data:
                         df_ev = pd.concat(evol_data)
                         df_pv = df_ev.pivot(index="assureur", columns="Période", values="delai")
                         cols_presentes = [c for c in ordre_chrono if c in df_pv.columns]
                         df_pv = df_pv[cols_presentes]
-                        assur_sel = st.multiselect("Sélectionner les assureurs :", options=df_pv.index.tolist(), default=[a for a in top_assurances if a in df_pv.index])
+
+                        # --- Sélecteur de Top ---
+                        options_top = {"Top 5": 5, "Top 10": 10, "Top 20": 20, "Global": None}
+                        col_top, col_spacer = st.columns([1, 3])
+                        with col_top:
+                            top_choix = st.selectbox("Afficher :", list(options_top.keys()), index=0, key="evol_top")
+                        nb_top = options_top[top_choix]
+                        assureurs_disponibles = [a for a in tous_assureurs if a in df_pv.index]
+                        defaut_sel = assureurs_disponibles[:nb_top] if nb_top else assureurs_disponibles
+
+                        assur_sel = st.multiselect(
+                            "Sélectionner les assureurs :",
+                            options=df_pv.index.tolist(),
+                            default=defaut_sel,
+                            key="evol_assureurs"
+                        )
                         if assur_sel:
                             df_plot = df_pv.loc[assur_sel].T
                             df_plot.index = pd.CategoricalIndex(df_plot.index, categories=ordre_chrono, ordered=True)
