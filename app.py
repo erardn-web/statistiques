@@ -235,9 +235,29 @@ def render_stats_patients():
         # --- FORMULAIRE CONFIGURATION ---
         with st.form("form_v11_1"):
             st.subheader("⚙️ Simulation des besoins (Cabinets A & B)")
+
+            # Chargement config depuis fichier Excel
+            config_file = st.file_uploader(
+                "📥 Charger une configuration sauvegardée (.xlsx)",
+                type="xlsx", key="config_capa_upload",
+                help="Rechargez un fichier exporté précédemment pour pré-remplir le tableau."
+            )
+            if config_file is not None:
+                try:
+                    df_loaded = pd.read_excel(config_file)
+                    # Vérifier que les colonnes attendues sont présentes
+                    cols_attendues = {"Thérapeute", "Cabinet", "Places/Sem", "Semaines/an"}
+                    if cols_attendues.issubset(set(df_loaded.columns)):
+                        st.session_state.capa_df = df_loaded[list(cols_attendues)].copy()
+                        st.success("✅ Configuration chargée.")
+                    else:
+                        st.warning("⚠️ Fichier non reconnu — colonnes attendues : Thérapeute, Cabinet, Places/Sem, Semaines/an.")
+                except Exception as e:
+                    st.error(f"Erreur lecture config : {e}")
+
             if 'capa_df' not in st.session_state:
                 st.session_state.capa_df = pd.DataFrame([
-                    {"Thérapeute": f"Thérapeute {i}", "Cabinet": "A" if i <= 6 else "B", 
+                    {"Thérapeute": f"Thérapeute {i}", "Cabinet": "A" if i <= 6 else "B",
                      "Places/Sem": 0, "Semaines/an": 43} for i in range(1, 13)
                 ])
 
@@ -253,6 +273,19 @@ def render_stats_patients():
                 in_jours = st.slider("Jours d'ouverture / semaine", 1, 6, 5)
 
             btn_go = st.form_submit_button("🚀 CALCULER ET COMPARER", use_container_width=True, type="primary")
+
+        # --- BOUTON SAUVEGARDER LA CONFIG ---
+        import io
+        buf = io.BytesIO()
+        edited_df.to_excel(buf, index=False, engine='openpyxl')
+        buf.seek(0)
+        st.download_button(
+            label="💾 Sauvegarder cette configuration (.xlsx)",
+            data=buf,
+            file_name="config_thérapeutes.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            help="Téléchargez ce fichier pour le recharger la prochaine fois."
+        )
 
         if btn_go:
             st.session_state.capa_df = edited_df
