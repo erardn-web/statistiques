@@ -129,11 +129,24 @@ def render_stats_patients():
                 # CA journalier sur TOUTES les prestations (pour jours ouvrés réels)
                 ca_jour = df[df[c_mont] > 0].dropna(subset=[c_date]).copy()
                 ca_jour = ca_jour.groupby(ca_jour[c_date].dt.date)[c_mont].sum()
-                # Patients nouveaux : codes bilan uniquement
-                codes = ["7301", "7311", "25.110"]
-                df_f = df[(df[c_mont] > 0) & (df[c_tarif].isin(codes))].dropna(subset=[c_date, c_pat]).copy()
-                df_f = df_f.rename(columns={c_date: "_date", c_pat: "_pat"})
-                return df_f[["_date", "_pat"]], ca_jour
+                # Trois flux séparés selon la logique de détection :
+                # - 7350 : bilan premier traitement (source principale)
+                # - 7301/7311 : garde uniquement pour le rythme et la moyenne séances
+                # - 25.110 : première apparition du patient (traitements courts)
+                df_pos = df[df[c_mont] > 0].dropna(subset=[c_date, c_pat]).copy()
+                df_pos[c_tarif] = df_pos[c_tarif].astype(str).str.strip()
+
+                df_7350 = df_pos[df_pos[c_tarif] == "7350"][[c_date, c_pat]].rename(columns={c_date: "_date", c_pat: "_pat"})
+                df_7350["_type"] = "7350"
+
+                df_physio = df_pos[df_pos[c_tarif].isin(["7301", "7311"])][[c_date, c_pat]].rename(columns={c_date: "_date", c_pat: "_pat"})
+                df_physio["_type"] = "physio"
+
+                df_25 = df_pos[df_pos[c_tarif] == "25.110"][[c_date, c_pat]].rename(columns={c_date: "_date", c_pat: "_pat"})
+                df_25["_type"] = "25.110"
+
+                df_f = pd.concat([df_7350, df_physio, df_25]).drop_duplicates(subset=["_date", "_pat", "_type"])
+                return df_f, ca_jour
 
             df_f, ca_jour = parser(file1)
             if file2 is not None:
@@ -151,8 +164,13 @@ def render_stats_patients():
             derniere_date = df_f["_date"].max()
             premiere_date = df_f["_date"].min()
 
-            # --- 1. STATS PAR PATIENT ---
-            p_stats = df_f.groupby("_pat").agg(
+            # Sous-ensembles par type
+            df_physio = df_f[df_f["_type"] == "physio"]
+            df_7350   = df_f[df_f["_type"] == "7350"]
+            df_25     = df_f[df_f["_type"] == "25.110"]
+
+            # --- 1. STATS PAR PATIENT (sur codes physio 7301/7311 pour rythme et moyenne) ---
+            p_stats = df_physio.groupby("_pat").agg(
                 nb_seances=("_pat", 'size'),
                 date_min=("_date", 'min'),
                 date_max=("_date", 'max')
@@ -189,15 +207,45 @@ def render_stats_patients():
             nb_termines = len(p_termines)
 
             # --- 4. FLUX NOUVEAUX PATIENTS ---
-            # Exclure les patients dont la première séance est dans les 4 premières semaines
-            # de l'export (biais "fantômes" = anciens patients qui semblent nouveaux)
+            # Logique par code :
+            # - 7350 : bilan premier traitement → nouveau si le patient n'a PAS de séance
+            #   7301/7311 dans les <delai_fin> jours AVANT la date du 7350
+            #   (évite de compter un patient qui reprend un 2e traitement comme nouveau)
+            # - 25.110 : première apparition du patient (traitements courts, pas de biais fantôme)
             seuil_fantomes = premiere_date + timedelta(days=28)
+
+            # Index des séances physio par patient pour tester les antécédents
+            physio_dates = df_physio.groupby("_pat")["_date"].apply(list).to_dict()
+
+            def est_vraiment_nouveau(pat, date_bilan, delai):
+                # Nouveau si aucune séance 7301/7311 dans les <delai> jours précédant le bilan
+                if pat not in physio_dates:
+                    return True
+                seuil_avant = date_bilan - timedelta(days=delai)
+                return not any(seuil_avant <= d < date_bilan for d in physio_dates[pat])
+
+            # Garder un seul événement par patient pour 7350 (le premier bilan vraiment nouveau)
+            nouveaux_7350 = (
+                df_7350
+                .sort_values("_date")
+                .loc[lambda df: df.apply(lambda r: est_vraiment_nouveau(r["_pat"], r["_date"], delai_fin), axis=1)]
+                .drop_duplicates(subset=["_pat"], keep="first")
+            )
+
+            # 25.110 : première séance du patient, sans filtre fantôme
+            nouveaux_25 = df_25.sort_values("_date").drop_duplicates(subset=["_pat"], keep="first")
 
             def stats_periode(jours):
                 seuil = derniere_date - timedelta(days=jours)
-                nouveaux = p_stats[(p_stats['date_min'] >= seuil) & (p_stats['date_min'] > seuil_fantomes)]
-                count = len(nouveaux)
                 jo = jours_ouvres(seuil, derniere_date, jours_cabinet_flux)
+                # 7350 dans la fenêtre, hors fantômes
+                n_7350 = nouveaux_7350[
+                    (nouveaux_7350["_date"] >= seuil) &
+                    (nouveaux_7350["_date"] > seuil_fantomes)
+                ]
+                # 25.110 : première séance dans la fenêtre
+                n_25 = nouveaux_25[nouveaux_25["_date"] >= seuil]
+                count = len(n_7350) + len(n_25)
                 return count, count / jo if jo > 0 else 0
 
             return {
