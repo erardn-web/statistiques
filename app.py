@@ -237,11 +237,34 @@ elif st.session_state.page == "factures":
                 
                 with tab4:
                     st.subheader("📈 Évolution du délai de remboursement")
+                    
+                    # --- NOUVEAU : Menu pour choisir le Top des assureurs ---
+                    col_top, col_vide = st.columns([1, 2])
+                    with col_top:
+                        choix_top = st.selectbox(
+                            "Sélection par défaut :", 
+                            ["Top 5", "Top 10", "Top 20", "Global (Tous)"], 
+                            index=0
+                        )
+
                     ordre_chrono = ["Global", "6 mois", "4 mois", "3 mois", "2 mois"]
                     periodes_graph = {"Global": None, "6 mois": 6, "4 mois": 4, "3 mois": 3, "2 mois": 2}
                     evol_data = []
                     p_hist_global = df[df["date_paiement"].notna()].copy()
-                    top_assurances = p_hist_global.groupby("assureur").size().sort_values(ascending=False).head(5).index.tolist()
+                    
+                    # Déterminer le classement de tous les assureurs par volume
+                    tous_les_assureurs = p_hist_global.groupby("assureur").size().sort_values(ascending=False).index.tolist()
+                    
+                    # Assigner le nombre en fonction du choix utilisateur
+                    if choix_top == "Top 5":
+                        top_assurances = tous_les_assureurs[:5]
+                    elif choix_top == "Top 10":
+                        top_assurances = tous_les_assureurs[:10]
+                    elif choix_top == "Top 20":
+                        top_assurances = tous_les_assureurs[:20]
+                    else:
+                        top_assurances = tous_les_assureurs
+                    
                     for n, v in periodes_graph.items():
                         lim = ajd - pd.DateOffset(months=v) if v else df["date_facture"].min()
                         h_tmp = df[(df["date_paiement"].notna()) & (df["date_facture"] >= lim)].copy()
@@ -250,19 +273,25 @@ elif st.session_state.page == "factures":
                             m = h_tmp.groupby("assureur")["delai"].mean().reset_index()
                             m["Période"] = n
                             evol_data.append(m)
+                            
                     if evol_data:
                         df_ev = pd.concat(evol_data)
                         df_pv = df_ev.pivot(index="assureur", columns="Période", values="delai")
                         cols_presentes = [c for c in ordre_chrono if c in df_pv.columns]
                         df_pv = df_pv[cols_presentes]
-                        assur_sel = st.multiselect("Sélectionner les assureurs :", options=df_pv.index.tolist(), default=[a for a in top_assurances if a in df_pv.index])
+                        
+                        # Le multiselect se remplit par défaut avec le Top choisi
+                        assur_sel = st.multiselect(
+                            "Affiner les assureurs affichés :", 
+                            options=df_pv.index.tolist(), 
+                            default=[a for a in top_assurances if a in df_pv.index]
+                        )
+                        
                         if assur_sel:
                             df_plot = df_pv.loc[assur_sel].T
                             df_plot.index = pd.CategoricalIndex(df_plot.index, categories=ordre_chrono, ordered=True)
                             st.line_chart(df_plot.sort_index())
                             st.dataframe(df_pv.loc[assur_sel].style.highlight_max(axis=1, color='#ff9999').highlight_min(axis=1, color='#99ff99'))
-        except Exception as e: st.error(f"Erreur d'analyse : {e}")
-
 # ==========================================
 # 🩺 MODULE MÉDECINS (ORIGINAL)
 # ==========================================
@@ -699,6 +728,7 @@ def render_stats_patients():
 # --- APPEL ---
 if 'page' not in st.session_state: st.session_state.page = "accueil"
 if st.session_state.page == "stats_patients": render_stats_patients()
+
 
 
 
