@@ -56,75 +56,86 @@ if 'analyse_lancee' not in st.session_state:
     st.session_state.analyse_lancee = False
 
 # ==========================================
-# 🏠 PAGE D'ACCUEIL
+# 🏠 PAGE D'ACCUEIL (STRUCTURÉE PAR SOURCE DE DONNÉES)
 # ==========================================
 if st.session_state.page == "accueil":
-    st.title("🏥 Assistant d'Analyse de Ephysio")
+    st.title("🏥 Assistant d'Analyse Ephysio")
     st.markdown("---")
-    st.write("### Choisissez le module d'analyse souhaité :")
     
-    # Injection de CSS pour transformer les boutons en "tuiles" d'application
+    # Style CSS pour séparer visuellement les deux zones
     st.markdown("""
     <style>
     div.stButton > button {
-        height: 120px;
+        height: 100px;
         border-radius: 12px;
-        border: 2px solid #f0f2f6;
+        border: 1px solid #e0e0e0;
         background-color: #ffffff;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+        box-shadow: 0 2px 4px rgba(0,0,0,0.03);
         transition: all 0.2s ease-in-out;
     }
     div.stButton > button:hover {
-        border-color: #00CCFF; /* Couleur de survol (Bleu médical) */
-        transform: translateY(-4px);
-        box-shadow: 0 8px 15px rgba(0,0,0,0.1);
+        border-color: #00CCFF;
+        transform: translateY(-2px);
+        box-shadow: 0 5px 15px rgba(0,0,0,0.08);
     }
-    div.stButton > button p {
-        font-size: 22px;
-        font-weight: 600;
+    .section-header {
+        padding: 12px;
+        border-radius: 8px;
+        background-color: #f8f9fa;
+        border-left: 5px solid #00CCFF;
+        margin-bottom: 25px;
+        font-weight: bold;
         color: #31333F;
     }
     </style>
     """, unsafe_allow_html=True)
 
-    # Ligne 1 : 3 modules
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
+    # Création de deux colonnes principales pour séparer les types d'exports
+    col_left, col_spacer, col_right = st.columns([1, 0.1, 1])
+
+    # --- COLONNE GAUCHE : EXPORT FACTURES ---
+    with col_left:
+        st.markdown('<div class="section-header">📂 Source : Export "FACTURES"</div>', unsafe_allow_html=True)
+        st.write("Analyses basées sur les dates d'envoi et de paiement.")
+        
+        st.write("") 
         if st.button("📊 Facturation", use_container_width=True):
             st.session_state.page = "factures"
             st.rerun()
-        st.caption("📌 Export et analyse des factures")
-            
-    with col2:
+        st.caption("📌 Délais de paiement, liquidités et retards par assureur.")
+
+        st.write("")
         if st.button("👨‍⚕️ Médecins", use_container_width=True):
             st.session_state.page = "medecins"
             st.rerun()
-        st.caption("📌 Performance et CA par médecin")
+        st.caption("📌 CA et tendances par médecin prescripteur.")
 
-    with col3:
-        if st.button("🏷️ Tarifs", use_container_width=True):
-            st.session_state.page = "tarifs"
-            st.rerun()
-        st.caption("📌 Tendances des prestations")
+    # --- COLONNE DROITE : EXPORT PRESTATIONS ---
+    with col_right:
+        st.markdown('<div class="section-header" style="border-left-color: #FF9900;">📑 Source : Export "PRESTATIONS"</div>', unsafe_allow_html=True)
+        st.write("Analyses basées sur l'activité clinique et les séances.")
 
-    st.write("") # Petit espace entre les deux lignes
-    st.write("")
+        st.write("")
+        # On place Tarifs et Bilan côte à côte pour gagner de la place
+        c1, c2 = st.columns(2)
+        with c1:
+            if st.button("🏷️ Tarifs", use_container_width=True):
+                st.session_state.page = "tarifs"
+                st.rerun()
+        with c2:
+            if st.button("🏦 Bilan", use_container_width=True):
+                st.session_state.page = "bilan"
+                st.rerun()
+        st.caption("📌 Revenus par code tarifaire et bilan annuel par fournisseur.")
 
-    # Ligne 2 : 2 modules (dans une grille de 3 pour garder la même largeur de bouton)
-    col4, col5, col6 = st.columns(3)
-    
-    with col4:
-        if st.button("🏦 Bilan Comptable", use_container_width=True):
-            st.session_state.page = "bilan"
-            st.rerun()
-        st.caption("📌 Synthèse annuelle par fournisseur")
-
-    with col5:
+        st.write("")
         if st.button("👥 Stats Patients", use_container_width=True):
             st.session_state.page = "stats_patients"
             st.rerun()
-        st.caption("📌 Pilotage du flux et occupation")
+        st.caption("📌 Flux de nouveaux patients et simulation de capacité.")
+
+    st.markdown("---")
+    st.info("💡 **Conseil :** Utilisez l'export Excel complet pour garantir la précision des calculs.")
 
 # ==========================================
 # 📊 MODULE FACTURES (ORIGINAL RÉPARÉ)
@@ -688,5 +699,6 @@ def render_stats_patients():
 # --- APPEL ---
 if 'page' not in st.session_state: st.session_state.page = "accueil"
 if st.session_state.page == "stats_patients": render_stats_patients()
+
 
 
