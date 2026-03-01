@@ -221,9 +221,32 @@ def render_stats_patients():
 
             rythme = pd.Series(rythmes_ep).mean() if rythmes_ep else 1.1
 
-            # --- 3. MOYENNE SÉANCES/TRAITEMENT (épisodes terminés uniquement) ---
+            # --- 3. CHRONIQUES & MOYENNE SÉANCES/TRAITEMENT ---
+            SEUIL_CHRONIQUE = 52  # séances sans pause = patient chronique
             seuil_termine = derniere_date - timedelta(days=delai_fin)
-            ep_termines = df_ep[df_ep["fin"] <= seuil_termine]
+
+            # Épisodes encore actifs (fin récente = en cours)
+            ep_en_cours = df_ep[df_ep["fin"] > seuil_termine]
+            ep_termines  = df_ep[df_ep["fin"] <= seuil_termine]
+
+            # Chroniques actifs = épisodes en cours avec déjà >= SEUIL_CHRONIQUE séances
+            chroniques_actifs = ep_en_cours[ep_en_cours["nb_seances"] >= SEUIL_CHRONIQUE]
+            nb_chroniques = len(chroniques_actifs)
+
+            # Cadence hebdomadaire des chroniques (sur les 90 derniers jours de l'export)
+            # = nombre moyen de séances/semaine par chronique récemment
+            seuil_90 = derniere_date - timedelta(days=90)
+            jo_90_flux = jours_ouvres(seuil_90, derniere_date, jours_cabinet_flux)
+            semaines_90 = jo_90_flux / 5  # semaines ouvrées
+            seances_chroniques_90 = df_physio[
+                df_physio["_pat"].isin(chroniques_actifs["_pat"]) &
+                (df_physio["_date"] >= seuil_90)
+            ]
+            rdv_chron_sem = (len(seances_chroniques_90) / semaines_90) if semaines_90 > 0 else 0
+
+            # Moyenne séances/traitement = épisodes terminés NON chroniques
+            # + pour les chroniques on utilise une estimation haute (nb séances actuelles)
+            # car on ne connaît pas leur fin → on les note séparément
             moy_seances = ep_termines['nb_seances'].mean() if not ep_termines.empty else df_ep['nb_seances'].mean()
             nb_termines = len(ep_termines)
 
@@ -289,6 +312,8 @@ def render_stats_patients():
                 "premiere_date": premiere_date,
                 "nb_fichiers": nb_fichiers,
                 "delai_fin": delai_fin,
+                "nb_chroniques": nb_chroniques,
+                "rdv_chron_sem": rdv_chron_sem,
             }
 
         data = get_full_analysis(uploaded_file, uploaded_file2, delai_fin_traitement, seuil_jour_flux)
@@ -301,7 +326,7 @@ def render_stats_patients():
         else:
             st.info(f"📄 **1 fichier** — Historique de **{nb_mois} mois** ({periode})")
 
-        st.caption(f"Moyenne séances/traitement calculée sur **{data['nb_termines']} épisodes terminés** — un épisode = séquence sans pause > {data['delai_fin']}j")
+        st.caption(f"Moyenne séances/traitement : **{data['moy_seances']:.1f}** séances (sur {data['nb_termines']} épisodes terminés, pause > {data['delai_fin']}j) | {data['nb_chroniques']} patients chroniques actifs (≥52 séances sans interruption) — leurs places sont déduites de la capacité disponible")
 
         # --- AFFICHAGE FLUX ---
         st.subheader(f"📈 Recrutement Réel (Calculé au {data['derniere_date'].strftime('%d/%m/%Y')})")
@@ -371,34 +396,53 @@ def render_stats_patients():
 
         if btn_go:
             st.session_state.capa_df = edited_df
-            
+
             def calc_needs(df_p):
                 annuel = (df_p['Places/Sem'] * df_p['Semaines/an']).sum()
                 capa_h = (annuel * (in_occup/100)) / 52.14
-                flux_h = (capa_h * in_rythme) / in_seances
-                return capa_h, flux_h
+                # Soustraire les places permanentes occupées par les chroniques
+                capa_dispo = max(0, capa_h - data['rdv_chron_sem'])
+                flux_h = (capa_dispo * in_rythme) / in_seances
+                return capa_h, capa_dispo, flux_h
 
             df_act = edited_df[edited_df['Places/Sem'] > 0]
-            c_tot, f_tot = calc_needs(df_act)
-            c_a, f_a = calc_needs(df_act[df_act['Cabinet'] == "A"])
-            c_b, f_b = calc_needs(df_act[df_act['Cabinet'] == "B"])
+            c_tot, cd_tot, f_tot = calc_needs(df_act)
+            c_a,   cd_a,   f_a   = calc_needs(df_act[df_act['Cabinet'] == "A"])
+            c_b,   cd_b,   f_b   = calc_needs(df_act[df_act['Cabinet'] == "B"])
 
             st.markdown("---")
+
+            # Info chroniques
+            st.info(
+                f"👴 **{data['nb_chroniques']} patients chroniques** actifs occupent en permanence "
+                f"**{data['rdv_chron_sem']:.1f} RDV/semaine** — déduits de la capacité disponible."
+            )
+
             t_all, t_a, t_b = st.tabs(["📊 TOTAL GLOBAL", "🏠 CABINET A", "🏠 CABINET B"])
 
             with t_all:
                 besoin_j = f_tot / in_jours
                 st.success(f"### Besoin Total : **{besoin_j:.1f}** nouveaux / jour")
+                col1, col2, col3 = st.columns(3)
+                col1.metric("Capacité totale", f"{c_tot:.1f} RDV/sem")
+                col2.metric("Dont chroniques", f"{data['rdv_chron_sem']:.1f} RDV/sem")
+                col3.metric("Capacité disponible", f"{cd_tot:.1f} RDV/sem")
                 diff = data['flux_60'][1] - besoin_j
                 st.metric("Équilibre (Réel 60j vs Théorique)", f"{data['flux_60'][1]:.1f} / jour", delta=round(diff, 1))
 
             with t_a:
-                st.info(f"### Besoin A : **{(f_a/in_jours):.1f}** nouveaux / jour")
-                st.metric("Capacité Cible A", f"{c_a:.1f} RDV/sem")
+                besoin_j_a = f_a / in_jours
+                st.info(f"### Besoin A : **{besoin_j_a:.1f}** nouveaux / jour")
+                col1, col2 = st.columns(2)
+                col1.metric("Capacité totale A", f"{c_a:.1f} RDV/sem")
+                col2.metric("Capacité disponible A", f"{cd_a:.1f} RDV/sem")
 
             with t_b:
-                st.warning(f"### Besoin B : **{(f_b/in_jours):.1f}** nouveaux / jour")
-                st.metric("Capacité Cible B", f"{c_b:.1f} RDV/sem")
+                besoin_j_b = f_b / in_jours
+                st.warning(f"### Besoin B : **{besoin_j_b:.1f}** nouveaux / jour")
+                col1, col2 = st.columns(2)
+                col1.metric("Capacité totale B", f"{c_b:.1f} RDV/sem")
+                col2.metric("Capacité disponible B", f"{cd_b:.1f} RDV/sem")
 
     except Exception as e:
         st.error(f"❌ Erreur : {e}")
