@@ -255,6 +255,7 @@ def render_stats_patients():
                 "flux_30":  stats_periode(30),
                 "flux_60":  stats_periode(60),
                 "flux_120": stats_periode(120),
+                "flux_365": stats_periode(365),
                 "derniere_date": derniere_date,
                 "premiere_date": premiere_date,
                 "nb_fichiers": nb_fichiers,
@@ -275,10 +276,11 @@ def render_stats_patients():
 
         # --- AFFICHAGE FLUX ---
         st.subheader(f"📈 Recrutement Réel (Calculé au {data['derniere_date'].strftime('%d/%m/%Y')})")
-        c_r1, c_r2, c_r3 = st.columns(3)
+        c_r1, c_r2, c_r3, c_r4 = st.columns(4)
         c_r1.metric("Derniers 30j", f"{data['flux_30'][0]} pat.", f"{data['flux_30'][1]:.2f} / j ouvré")
         c_r2.metric("Derniers 60j", f"{data['flux_60'][0]} pat.", f"{data['flux_60'][1]:.2f} / j ouvré")
         c_r3.metric("Derniers 120j", f"{data['flux_120'][0]} pat.", f"{data['flux_120'][1]:.2f} / j ouvré")
+        c_r4.metric("Derniers 365j", f"{data['flux_365'][0]} pat.", f"{data['flux_365'][1]:.2f} / j ouvré")
 
         # --- FORMULAIRE CONFIGURATION ---
         with st.form("form_v11_1"):
