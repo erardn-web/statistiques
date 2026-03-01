@@ -635,15 +635,33 @@ elif st.session_state.page == "tarifs":
 
                 # 2. TABLEAU DES TENDANCES
                 st.markdown(f"### 📈 Performance par Tarif (Base : {reference_date.strftime('%d.%m.%Y')})")
-                
+
+                jours_cabinet_t = set(df_filtered[nom_col_date].dt.date.unique())
+
+                methode_tarif = st.radio(
+                    "Comparer les 90 derniers jours avec :",
+                    ["📅 Les 365 derniers jours (méthode actuelle)", "📆 Les mêmes 90 jours de l'année précédente (anti-saisonnalité)"],
+                    horizontal=True, key="methode_tarif"
+                )
+                annee_sur_annee_t = "précédente" in methode_tarif
+
                 t_90j = reference_date - pd.DateOffset(days=90)
-                t_365j = reference_date - pd.DateOffset(days=365)
-                jo_90  = jours_ouvres(t_90j,  reference_date)
-                jo_365 = jours_ouvres(t_365j, reference_date)
-                
+                jo_90 = jours_ouvres(t_90j, reference_date, jours_cabinet_t)
+
+                if annee_sur_annee_t:
+                    t_ref_fin   = reference_date - pd.DateOffset(years=1)
+                    t_ref_debut = t_90j          - pd.DateOffset(years=1)
+                    jo_ref      = jours_ouvres(t_ref_debut, t_ref_fin, jours_cabinet_t)
+                    label_ref   = "CA même période N-1"
+                    ca_ref = df_filtered[(df_filtered[nom_col_date] >= t_ref_debut) & (df_filtered[nom_col_date] <= t_ref_fin)].groupby(nom_col_code)[nom_col_somme].sum().reset_index(name=label_ref)
+                else:
+                    t_365j      = reference_date - pd.DateOffset(days=365)
+                    jo_ref      = jours_ouvres(t_365j, reference_date, jours_cabinet_t)
+                    label_ref   = "CA 365j"
+                    ca_ref = df_filtered[df_filtered[nom_col_date] >= t_365j].groupby(nom_col_code)[nom_col_somme].sum().reset_index(name=label_ref)
+
                 stats_global = df_filtered.groupby(nom_col_code)[nom_col_somme].sum().reset_index(name="CA Global")
                 ca_90 = df_filtered[df_filtered[nom_col_date] >= t_90j].groupby(nom_col_code)[nom_col_somme].sum().reset_index(name="CA 90j")
-                ca_365 = df_filtered[df_filtered[nom_col_date] >= t_365j].groupby(nom_col_code)[nom_col_somme].sum().reset_index(name="CA 365j")
 
                 # Nom de la prestation : on prend le nom le plus fréquent pour chaque code
                 noms_prestation = (
@@ -654,9 +672,9 @@ elif st.session_state.page == "tarifs":
                 )
 
                 tab_perf = stats_global.merge(noms_prestation, on=nom_col_code, how="left")
-                tab_perf = tab_perf.merge(ca_365, on=nom_col_code, how="left").merge(ca_90, on=nom_col_code, how="left").fillna(0)
+                tab_perf = tab_perf.merge(ca_ref, on=nom_col_code, how="left").merge(ca_90, on=nom_col_code, how="left").fillna(0)
                 tab_perf["Tendance"] = tab_perf.apply(
-                    lambda r: calculer_tendance(r["CA 90j"], r["CA 365j"], jo_90, jo_365), axis=1
+                    lambda r: calculer_tendance(r["CA 90j"], r[label_ref], jo_90, jo_ref), axis=1
                 )
 
                 tab_sorted = tab_perf.sort_values("CA Global", ascending=False)
@@ -676,7 +694,7 @@ elif st.session_state.page == "tarifs":
                         f'<td><span title="{nom}" style="cursor:help;border-bottom:1px dotted #999">{code}</span></td>'
                         f'<td>{tendance_html(r["Tendance"])}</td>'
                         f'<td style="text-align:right">{r["CA Global"]:,.2f}</td>'
-                        f'<td style="text-align:right">{r["CA 365j"]:,.2f}</td>'
+                        f'<td style="text-align:right">{r[label_ref]:,.2f}</td>'
                         f'<td style="text-align:right">{r["CA 90j"]:,.2f}</td>'
                         f'</tr>'
                     )
@@ -692,7 +710,7 @@ elif st.session_state.page == "tarifs":
                     "<table class='tarif-table'>"
                     "<thead><tr>"
                     "<th>Code</th><th>Tendance</th>"
-                    "<th>CA Global (CHF)</th><th>CA 365j (CHF)</th><th>CA 90j (CHF)</th>"
+                    f"<th>CA Global (CHF)</th><th>{label_ref} (CHF)</th><th>CA 90j (CHF)</th>"
                     "</tr></thead>"
                     f"<tbody>{rows}</tbody>"
                     "</table>"
