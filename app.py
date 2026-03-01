@@ -169,42 +169,69 @@ def render_stats_patients():
             df_7350   = df_f[df_f["_type"] == "7350"]
             df_25     = df_f[df_f["_type"] == "25.110"]
 
-            # --- 1. STATS PAR PATIENT (sur codes physio 7301/7311 pour rythme et moyenne) ---
+            # --- 1. DÉCOUPAGE EN ÉPISODES DE TRAITEMENT ---
+            # Un épisode = séquence continue de séances 7301/7311 sans pause > PAUSE_TRAITEMENT jours.
+            # Le 7350 est refacturé tous les 36 séances ou 6 mois pour des raisons admin,
+            # il ne marque donc PAS le début d'un nouveau traitement.
+            PAUSE_TRAITEMENT = delai_fin  # paramètre utilisateur (défaut 60j)
+
+            episodes = []
+            for pat, grp in df_physio.groupby("_pat"):
+                seances = sorted(grp["_date"].tolist())
+                debut = seances[0]
+                precedente = seances[0]
+                count = 1
+                for s in seances[1:]:
+                    if (s - precedente).days > PAUSE_TRAITEMENT:
+                        episodes.append({"_pat": pat, "debut": debut, "fin": precedente, "nb_seances": count})
+                        debut = s
+                        count = 1
+                    else:
+                        count += 1
+                    precedente = s
+                episodes.append({"_pat": pat, "debut": debut, "fin": precedente, "nb_seances": count})
+
+            df_ep = pd.DataFrame(episodes)
+
+            # --- 2. RYTHME HEBDOMADAIRE (semaines actives par épisode) ---
+            # Pour chaque épisode, on compte les semaines distinctes avec au moins une séance.
+            rythmes_ep = []
+            for pat, grp in df_physio.groupby("_pat"):
+                seances = sorted(grp["_date"].tolist())
+                precedente = seances[0]
+                ep_seances = [seances[0]]
+                for s in seances[1:]:
+                    if (s - precedente).days > PAUSE_TRAITEMENT:
+                        if len(ep_seances) >= 2:
+                            semaines = pd.Series(ep_seances).dt.isocalendar().apply(
+                                lambda r: f"{r['year']}-{r['week']:02d}", axis=1
+                            ).nunique()
+                            if semaines >= 2:
+                                rythmes_ep.append(len(ep_seances) / semaines)
+                        ep_seances = [s]
+                    else:
+                        ep_seances.append(s)
+                    precedente = s
+                if len(ep_seances) >= 2:
+                    semaines = pd.Series(ep_seances).dt.isocalendar().apply(
+                        lambda r: f"{r['year']}-{r['week']:02d}", axis=1
+                    ).nunique()
+                    if semaines >= 2:
+                        rythmes_ep.append(len(ep_seances) / semaines)
+
+            rythme = pd.Series(rythmes_ep).mean() if rythmes_ep else 1.1
+
+            # --- 3. MOYENNE SÉANCES/TRAITEMENT (épisodes terminés uniquement) ---
+            seuil_termine = derniere_date - timedelta(days=delai_fin)
+            ep_termines = df_ep[df_ep["fin"] <= seuil_termine]
+            moy_seances = ep_termines['nb_seances'].mean() if not ep_termines.empty else df_ep['nb_seances'].mean()
+            nb_termines = len(ep_termines)
+
+            # p_stats conservé pour la compatibilité (filtre fantômes flux nouveaux)
             p_stats = df_physio.groupby("_pat").agg(
-                nb_seances=("_pat", 'size'),
                 date_min=("_date", 'min'),
                 date_max=("_date", 'max')
             )
-            p_stats['jours_vie'] = (p_stats['date_max'] - p_stats['date_min']).dt.days
-
-            # --- 2. RYTHME HEBDOMADAIRE (semaines actives uniquement) ---
-            # Problème de l'ancienne méthode : jours_vie inclut les semaines sans séance
-            # (fin de traitement, pauses), ce qui tire le rythme artificiellement vers le bas.
-            # Nouvelle approche : pour chaque patient, on compte le nombre de semaines
-            # où il a eu au moins une séance (semaines actives), puis on divise
-            # le nombre de séances par ce nombre de semaines actives.
-            def rythme_semaines_actives(group):
-                semaines = group["_date"].dt.isocalendar().apply(
-                    lambda r: f"{r['year']}-{r['week']:02d}", axis=1
-                ).nunique()
-                return len(group) / semaines if semaines > 0 else 0
-
-            # Uniquement patients avec au moins 2 semaines actives distinctes
-            rythmes_pat = df_f.groupby("_pat").filter(
-                lambda g: g["_date"].dt.isocalendar().apply(
-                    lambda r: f"{r['year']}-{r['week']:02d}", axis=1
-                ).nunique() >= 2
-            ).groupby("_pat").apply(rythme_semaines_actives)
-
-            rythme = rythmes_pat.mean() if not rythmes_pat.empty else 1.1
-
-            # --- 3. MOYENNE SÉANCES/TRAITEMENT (patients présumés terminés uniquement) ---
-            # Un patient est "terminé" si sa dernière séance date de plus de delai_fin jours
-            # → élimine les patients récents dont on ne connaît pas encore le nombre final de séances
-            seuil_termine = derniere_date - timedelta(days=delai_fin)
-            p_termines = p_stats[p_stats['date_max'] <= seuil_termine]
-            moy_seances = p_termines['nb_seances'].mean() if not p_termines.empty else p_stats['nb_seances'].mean()
-            nb_termines = len(p_termines)
 
             # --- 4. FLUX NOUVEAUX PATIENTS ---
             # Logique par code :
@@ -274,7 +301,7 @@ def render_stats_patients():
         else:
             st.info(f"📄 **1 fichier** — Historique de **{nb_mois} mois** ({periode})")
 
-        st.caption(f"Moyenne séances/traitement calculée sur **{data['nb_termines']} patients terminés** (dernière séance > {data['delai_fin']}j avant la fin de l'export)")
+        st.caption(f"Moyenne séances/traitement calculée sur **{data['nb_termines']} épisodes terminés** — un épisode = séquence sans pause > {data['delai_fin']}j")
 
         # --- AFFICHAGE FLUX ---
         st.subheader(f"📈 Recrutement Réel (Calculé au {data['derniere_date'].strftime('%d/%m/%Y')})")
