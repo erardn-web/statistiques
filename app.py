@@ -670,8 +670,12 @@ elif st.session_state.page == "tarifs":
                     .rename(columns={nom_col_nom: "Prestation"})
                 )
 
+                label_taux_ref = "Taux N-1 (CHF/j)" if annee_sur_annee_t else "Taux 365j (CHF/j)"
+
                 tab_perf = stats_global.merge(noms_prestation, on=nom_col_code, how="left")
                 tab_perf = tab_perf.merge(ca_ref, on=nom_col_code, how="left").merge(ca_90, on=nom_col_code, how="left").fillna(0)
+                tab_perf["Taux 90j (CHF/j)"]   = (tab_perf["CA 90j"]      / jo_90).round(1)
+                tab_perf[label_taux_ref]        = (tab_perf[label_ref]     / jo_ref).round(1)
                 tab_perf["Tendance"] = tab_perf.apply(
                     lambda r: calculer_tendance(r["CA 90j"], r[label_ref], jo_90, jo_ref), axis=1
                 )
@@ -694,7 +698,9 @@ elif st.session_state.page == "tarifs":
                         f'<td>{tendance_html(r["Tendance"])}</td>'
                         f'<td style="text-align:right">{r["CA Global"]:,.2f}</td>'
                         f'<td style="text-align:right">{r[label_ref]:,.2f}</td>'
+                        f'<td style="text-align:right">{r[label_taux_ref]:,.2f}</td>'
                         f'<td style="text-align:right">{r["CA 90j"]:,.2f}</td>'
+                        f'<td style="text-align:right">{r["Taux 90j (CHF/j)"]:,.2f}</td>'
                         f'</tr>'
                     )
 
@@ -709,7 +715,7 @@ elif st.session_state.page == "tarifs":
                     "<table class='tarif-table'>"
                     "<thead><tr>"
                     "<th>Code</th><th>Tendance</th>"
-                    f"<th>CA Global (CHF)</th><th>{label_ref} (CHF)</th><th>CA 90j (CHF)</th>"
+                    f"<th>CA Global (CHF)</th><th>{label_ref} (CHF)</th><th>{label_taux_ref}</th><th>CA 90j (CHF)</th><th>Taux 90j (CHF/j)</th>"
                     "</tr></thead>"
                     f"<tbody>{rows}</tbody>"
                     "</table>"
