@@ -11,6 +11,20 @@ st.set_page_config(page_title="Analyseur de Facturation Pro", layout="wide", pag
 MOTS_EXCLUSION = {"BERNOIS", "NEUCHATELOIS", "VALAISANS", "GENEVOIS", "VAUDOIS", "FRIBOURGEOIS"}
 COULEURS_PROF = {"Physiothérapie": "#00CCFF", "Ergothérapie": "#FF9900", "Massage": "#00CC96", "Autre": "#AB63FA"}
 
+def calculer_tendance(ca_90j, ca_365j):
+    """Calcul unifié de la tendance (partagé entre modules Médecins et Tarifs)"""
+    if ca_365j > 0:
+        ratio = (ca_90j / ca_365j) * 100
+        if ratio <= 23: return f"↘️ Baisse ({ratio:.1f}%)"
+        if ratio >= 27: return f"↗️ Hausse ({ratio:.1f}%)"
+        return "➡️ Stable"
+    return "N/A"
+
+def valider_colonnes(df, nb_min, nom_module):
+    """Valide que le DataFrame a assez de colonnes, lève une erreur claire sinon."""
+    if len(df.columns) < nb_min:
+        raise ValueError(f"[{nom_module}] Le fichier semble incorrect : {len(df.columns)} colonnes trouvées, {nb_min} attendues minimum.")
+
 def assigner_profession(code):
     """Logique métier spécifique au module Tarifs"""
     c = str(code).strip().lower()
@@ -48,6 +62,132 @@ def calculer_liquidites_fournisseur(f_attente, p_hist, jours_horizons):
             total_h += row["montant"] * prob
         liq[h] = total_h
     return liq, taux_glob
+
+# 👥 MODULE : PILOTAGE FLUX
+# ==========================================
+def render_stats_patients():
+    if st.sidebar.button("⬅️ Retour Accueil", key="btn_back_final"):
+        st.session_state.page = "accueil"
+        st.rerun()
+
+    st.sidebar.markdown("---")
+    uploaded_file = st.sidebar.file_uploader("📂 Déposer l'export Excel", type="xlsx", key="uploader_v11_1")
+
+    st.title("👥 Pilotage du Flux Patients")
+
+    if not uploaded_file:
+        st.info("👋 Chargez un fichier Excel pour activer l'analyse comparative.")
+        return
+
+    try:
+        @st.cache_data
+        def get_full_analysis(file):
+            df = pd.read_excel(file, sheet_name='Prestation')
+            df.columns = [str(c).strip() for c in df.columns]
+            
+            c_date, c_tarif, c_pat, c_mont = df.columns[1], df.columns[2], df.columns[8], df.columns[11]
+            df[c_date] = pd.to_datetime(df[c_date], errors='coerce')
+            df[c_tarif] = df[c_tarif].astype(str).str.strip()
+            
+            codes = ["7301", "7311", "25.110"]
+            df_f = df[(df[c_mont] > 0) & (df[c_tarif].isin(codes))].dropna(subset=[c_date, c_pat]).copy()
+            
+            # --- 1. CALCULS HISTORIQUES ---
+            p_stats = df_f.groupby(c_pat).agg(
+                nb_seances=(c_pat, 'size'),
+                date_min=(c_date, 'min'),
+                date_max=(c_date, 'max')
+            )
+            
+            p_stats['jours_vie'] = (p_stats['date_max'] - p_stats['date_min']).dt.days
+            p_suivis = p_stats[p_stats['jours_vie'] >= 7]
+            rythme = p_suivis['nb_seances'].sum() / (p_suivis['jours_vie'].sum() / 7) if not p_suivis.empty else 1.1
+
+            # --- 2. CALCUL DU FLUX RÉEL ---
+            derniere_date = df_f[c_date].max()
+            
+            def stats_periode(jours):
+                seuil = derniere_date - timedelta(days=jours)
+                # Un patient est "nouveau" si sa toute première séance est dans la zone
+                nouveaux = p_stats[p_stats['date_min'] >= seuil]
+                count = len(nouveaux)
+                jours_ouvres = (jours / 7) * 5
+                return count, count / jours_ouvres if jours_ouvres > 0 else 0
+
+            return {
+                "moy_seances": p_stats['nb_seances'].mean(),
+                "rythme_reel": rythme,
+                "flux_30": stats_periode(30),
+                "flux_60": stats_periode(60),
+                "flux_120": stats_periode(120),
+                "derniere_date": derniere_date
+            }
+
+        data = get_full_analysis(uploaded_file)
+
+        # --- AFFICHAGE ANALYSE RÉELLE ---
+        st.subheader(f"📈 Recrutement Réel (Calculé au {data['derniere_date'].strftime('%d/%m/%Y')})")
+        c_r1, c_r2, c_r3 = st.columns(3)
+        c_r1.metric("Derniers 30j", f"{data['flux_30'][0]} pat.", f"{data['flux_30'][1]:.1f} / jour")
+        c_r2.metric("Derniers 60j", f"{data['flux_60'][0]} pat.", f"{data['flux_60'][1]:.1f} / jour")
+        c_r3.metric("Derniers 120j", f"{data['flux_120'][0]} pat.", f"{data['flux_120'][1]:.1f} / jour")
+
+        # --- FORMULAIRE CONFIGURATION ---
+        with st.form("form_v11_1"):
+            st.subheader("⚙️ Simulation des besoins (Cabinets A & B)")
+            if 'capa_df' not in st.session_state:
+                st.session_state.capa_df = pd.DataFrame([
+                    {"Thérapeute": f"Thérapeute {i}", "Cabinet": "A" if i <= 6 else "B", 
+                     "Places/Sem": 0, "Semaines/an": 43} for i in range(1, 13)
+                ])
+
+            config = {"Cabinet": st.column_config.SelectboxColumn("Cabinet", options=["A", "B"], required=True)}
+            edited_df = st.data_editor(st.session_state.capa_df, column_config=config, use_container_width=True)
+
+            col_p1, col_p2 = st.columns(2)
+            with col_p1:
+                in_seances = st.number_input("Séances / traitement", value=float(round(data['moy_seances'], 1)))
+                in_rythme = st.slider("Rythme hebdomadaire", 0.5, 3.0, float(round(data['rythme_reel'], 1)))
+            with col_p2:
+                in_occup = st.slider("Taux d'occupation visé (%)", 50, 100, 85)
+                in_jours = st.slider("Jours d'ouverture / semaine", 1, 6, 5)
+
+            btn_go = st.form_submit_button("🚀 CALCULER ET COMPARER", use_container_width=True, type="primary")
+
+        if btn_go:
+            st.session_state.capa_df = edited_df
+            
+            def calc_needs(df_p):
+                annuel = (df_p['Places/Sem'] * df_p['Semaines/an']).sum()
+                capa_h = (annuel * (in_occup/100)) / 52.14
+                flux_h = (capa_h * in_rythme) / in_seances
+                return capa_h, flux_h
+
+            df_act = edited_df[edited_df['Places/Sem'] > 0]
+            c_tot, f_tot = calc_needs(df_act)
+            c_a, f_a = calc_needs(df_act[df_act['Cabinet'] == "A"])
+            c_b, f_b = calc_needs(df_act[df_act['Cabinet'] == "B"])
+
+            st.markdown("---")
+            t_all, t_a, t_b = st.tabs(["📊 TOTAL GLOBAL", "🏠 CABINET A", "🏠 CABINET B"])
+
+            with t_all:
+                besoin_j = f_tot / in_jours
+                st.success(f"### Besoin Total : **{besoin_j:.1f}** nouveaux / jour")
+                diff = data['flux_60'][1] - besoin_j
+                st.metric("Équilibre (Réel 60j vs Théorique)", f"{data['flux_60'][1]:.1f} / jour", delta=round(diff, 1))
+
+            with t_a:
+                st.info(f"### Besoin A : **{(f_a/in_jours):.1f}** nouveaux / jour")
+                st.metric("Capacité Cible A", f"{c_a:.1f} RDV/sem")
+
+            with t_b:
+                st.warning(f"### Besoin B : **{(f_b/in_jours):.1f}** nouveaux / jour")
+                st.metric("Capacité Cible B", f"{c_b:.1f} RDV/sem")
+
+    except Exception as e:
+        st.error(f"❌ Erreur : {e}")
+
 
 # --- INITIALISATION DE L'ÉTAT ---
 if 'page' not in st.session_state:
@@ -150,7 +290,10 @@ elif st.session_state.page == "factures":
 
     if uploaded_file:
         try:
-            df_brut = pd.read_excel(uploaded_file, header=0)
+            @st.cache_data
+            def lire_factures(f): return pd.read_excel(f, header=0)
+            df_brut = lire_factures(uploaded_file)
+            valider_colonnes(df_brut, 16, "Factures")
             st.sidebar.header("🔍 2. Filtres")
             fournisseurs = df_brut.iloc[:, 9].dropna().unique().tolist()
             sel_fournisseurs = st.sidebar.multiselect("Fournisseurs :", options=sorted(fournisseurs), default=fournisseurs)
@@ -277,7 +420,10 @@ elif st.session_state.page == "medecins":
     
     if uploaded_file:
         try:
-            df_brut = pd.read_excel(uploaded_file, header=0)
+            @st.cache_data
+            def lire_medecins(f): return pd.read_excel(f, header=0)
+            df_brut = lire_medecins(uploaded_file)
+            valider_colonnes(df_brut, 15, "Médecins")
             st.sidebar.header("🔍 Filtres")
             fourn_med = sorted(df_brut.iloc[:, 9].dropna().unique().tolist())
             sel_fourn_med = st.sidebar.multiselect("Fournisseurs :", fourn_med, default=fourn_med)
@@ -315,7 +461,7 @@ elif st.session_state.page == "medecins":
                 ca_90 = df_m[df_m["date_f"] >= t_90j].groupby("medecin")["ca"].sum().reset_index(name="CA 90j")
                 ca_365 = df_m[df_m["date_f"] >= t_365j].groupby("medecin")["ca"].sum().reset_index(name="CA 365j")
                 tab_final = stats_ca.merge(ca_90, on="medecin", how="left").merge(ca_365, on="medecin", how="left").fillna(0)
-                tab_final["Tendance"] = tab_final.apply(lambda r: f"↘️ Baisse ({(r['CA 90j']/r['CA 365j']*100):.1f}%)" if (r['CA 365j']>0 and r['CA 90j']/r['CA 365j']*100 <= 23) else f"↗️ Hausse ({(r['CA 90j']/r['CA 365j']*100):.1f}%)" if (r['CA 365j']>0 and r['CA 90j']/r['CA 365j']*100 >= 27) else "➡️ Stable", axis=1)
+                tab_final["Tendance"] = tab_final.apply(lambda r: calculer_tendance(r["CA 90j"], r["CA 365j"]), axis=1)
 
                 st.markdown("### 🏆 Sélection et Visualisation")
                 c1, c2, c3 = st.columns([1, 1, 1.5]) 
@@ -356,7 +502,8 @@ elif st.session_state.page == "tarifs":
 
     if uploaded_file:
         try:
-            df = pd.read_excel(uploaded_file, sheet_name='Prestation')
+            ong_p = next((s for s in pd.ExcelFile(uploaded_file).sheet_names if 'Prestation' in s or 'prestation' in s.lower()), 'Prestation')
+            df = pd.read_excel(uploaded_file, sheet_name=ong_p)
             nom_col_code = df.columns[2]   # C (Tarif)
             nom_col_somme = df.columns[11] # L (Montant)
             date_cols = [c for c in df.columns if 'Date' in str(c)]
@@ -430,15 +577,7 @@ elif st.session_state.page == "tarifs":
                 
                 tab_perf = stats_global.merge(ca_365, on=nom_col_code, how="left").merge(ca_90, on=nom_col_code, how="left").fillna(0)
                 
-                def calculer_tendance_tarif(r):
-                    if r['CA 365j'] > 0:
-                        ratio = (r['CA 90j'] / r['CA 365j']) * 100
-                        if ratio <= 23: return f"↘️ Baisse ({ratio:.1f}%)"
-                        if ratio >= 27: return f"↗️ Hausse ({ratio:.1f}%)"
-                        return "➡️ Stable"
-                    return "N/A"
-
-                tab_perf["Tendance"] = tab_perf.apply(calculer_tendance_tarif, axis=1)
+                tab_perf["Tendance"] = tab_perf.apply(lambda r: calculer_tendance(r["CA 90j"], r["CA 365j"]), axis=1)
                 
                 st.dataframe(
                     tab_perf.sort_values("CA Global", ascending=False),
@@ -469,10 +608,10 @@ elif st.session_state.page == "bilan":
     if up:
         try:
             xl = pd.ExcelFile(up)
-            ong_f = next((s for s in xl.sheet_names if 'Facture' in s), None)
+            ong_f = next((s for s in xl.sheet_names if 'Facture' in s or 'facture' in s.lower()), None)
             
             if not ong_f:
-                st.error("L'onglet 'Facture' est introuvable.")
+                st.error(f"L'onglet 'Facture' est introuvable. Onglets disponibles : {', '.join(xl.sheet_names)}")
                 st.stop()
             
             df_f = pd.read_excel(up, sheet_name=ong_f)
@@ -566,137 +705,7 @@ elif st.session_state.page == "bilan":
         except Exception as e:
             st.error(f"Erreur d'analyse : {e}")
 
-import streamlit as st
-import pandas as pd
-from datetime import datetime, timedelta
+elif st.session_state.page == "stats_patients":
+    render_stats_patients()
 
 # ==========================================
-# 👥 MODULE : PILOTAGE FLUX (V11.1 - Final Fix)
-# ==========================================
-def render_stats_patients():
-    if st.sidebar.button("⬅️ Retour Accueil", key="btn_back_final"):
-        st.session_state.page = "accueil"
-        st.rerun()
-
-    st.sidebar.markdown("---")
-    uploaded_file = st.sidebar.file_uploader("📂 Déposer l'export Excel", type="xlsx", key="uploader_v11_1")
-
-    st.title("👥 Pilotage du Flux Patients")
-
-    if not uploaded_file:
-        st.info("👋 Chargez un fichier Excel pour activer l'analyse comparative.")
-        return
-
-    try:
-        @st.cache_data
-        def get_full_analysis(file):
-            df = pd.read_excel(file, sheet_name='Prestation')
-            df.columns = [str(c).strip() for c in df.columns]
-            
-            c_date, c_tarif, c_pat, c_mont = df.columns[1], df.columns[2], df.columns[8], df.columns[11]
-            df[c_date] = pd.to_datetime(df[c_date], errors='coerce')
-            df[c_tarif] = df[c_tarif].astype(str).str.strip()
-            
-            codes = ["7301", "7311", "25.110"]
-            df_f = df[(df[c_mont] > 0) & (df[c_tarif].isin(codes))].dropna(subset=[c_date, c_pat]).copy()
-            
-            # --- 1. CALCULS HISTORIQUES ---
-            p_stats = df_f.groupby(c_pat).agg(
-                nb_seances=(c_pat, 'size'),
-                date_min=(c_date, 'min'),
-                date_max=(c_date, 'max')
-            )
-            
-            p_stats['jours_vie'] = (p_stats['date_max'] - p_stats['date_min']).dt.days
-            p_suivis = p_stats[p_stats['jours_vie'] >= 7]
-            rythme = p_suivis['nb_seances'].sum() / (p_suivis['jours_vie'].sum() / 7) if not p_suivis.empty else 1.1
-
-            # --- 2. CALCUL DU FLUX RÉEL ---
-            derniere_date = df_f[c_date].max()
-            
-            def stats_periode(jours):
-                seuil = derniere_date - timedelta(days=jours)
-                # Un patient est "nouveau" si sa toute première séance est dans la zone
-                nouveaux = p_stats[p_stats['date_min'] >= seuil]
-                count = len(nouveaux)
-                jours_ouvres = (jours / 7) * 5
-                return count, count / jours_ouvres if jours_ouvres > 0 else 0
-
-            return {
-                "moy_seances": p_stats['nb_seances'].mean(),
-                "rythme_reel": rythme,
-                "flux_30": stats_periode(30),
-                "flux_60": stats_periode(60),
-                "flux_120": stats_periode(120),
-                "derniere_date": derniere_date
-            }
-
-        data = get_full_analysis(uploaded_file)
-
-        # --- AFFICHAGE ANALYSE RÉELLE ---
-        st.subheader(f"📈 Recrutement Réel (Calculé au {data['derniere_date'].strftime('%d/%m/%Y')})")
-        c_r1, c_r2, c_r3 = st.columns(3)
-        c_r1.metric("Derniers 30j", f"{data['flux_30'][0]} pat.", f"{data['flux_30'][1]:.1f} / jour")
-        c_r2.metric("Derniers 60j", f"{data['flux_60'][0]} pat.", f"{data['flux_60'][1]:.1f} / jour")
-        c_r3.metric("Derniers 120j", f"{data['flux_120'][0]} pat.", f"{data['flux_120'][1]:.1f} / jour")
-
-        # --- FORMULAIRE CONFIGURATION ---
-        with st.form("form_v11_1"):
-            st.subheader("⚙️ Simulation des besoins (Cabinets A & B)")
-            if 'capa_df' not in st.session_state:
-                st.session_state.capa_df = pd.DataFrame([
-                    {"Thérapeute": f"Thérapeute {i}", "Cabinet": "A" if i <= 6 else "B", 
-                     "Places/Sem": 0, "Semaines/an": 43} for i in range(1, 13)
-                ])
-
-            config = {"Cabinet": st.column_config.SelectboxColumn("Cabinet", options=["A", "B"], required=True)}
-            edited_df = st.data_editor(st.session_state.capa_df, column_config=config, use_container_width=True)
-
-            col_p1, col_p2 = st.columns(2)
-            with col_p1:
-                in_seances = st.number_input("Séances / traitement", value=float(round(data['moy_seances'], 1)))
-                in_rythme = st.slider("Rythme hebdomadaire", 0.5, 3.0, float(round(data['rythme_reel'], 1)))
-            with col_p2:
-                in_occup = st.slider("Taux d'occupation visé (%)", 50, 100, 85)
-                in_jours = st.slider("Jours d'ouverture / semaine", 1, 6, 5)
-
-            btn_go = st.form_submit_button("🚀 CALCULER ET COMPARER", use_container_width=True, type="primary")
-
-        if btn_go:
-            st.session_state.capa_df = edited_df
-            
-            def calc_needs(df_p):
-                annuel = (df_p['Places/Sem'] * df_p['Semaines/an']).sum()
-                capa_h = (annuel * (in_occup/100)) / 52.14
-                flux_h = (capa_h * in_rythme) / in_seances
-                return capa_h, flux_h
-
-            df_act = edited_df[edited_df['Places/Sem'] > 0]
-            c_tot, f_tot = calc_needs(df_act)
-            c_a, f_a = calc_needs(df_act[df_act['Cabinet'] == "A"])
-            c_b, f_b = calc_needs(df_act[df_act['Cabinet'] == "B"])
-
-            st.markdown("---")
-            t_all, t_a, t_b = st.tabs(["📊 TOTAL GLOBAL", "🏠 CABINET A", "🏠 CABINET B"])
-
-            with t_all:
-                besoin_j = f_tot / in_jours
-                st.success(f"### Besoin Total : **{besoin_j:.1f}** nouveaux / jour")
-                diff = data['flux_60'][1] - besoin_j
-                st.metric("Équilibre (Réel 60j vs Théorique)", f"{data['flux_60'][1]:.1f} / jour", delta=round(diff, 1))
-
-            with t_a:
-                st.info(f"### Besoin A : **{(f_a/in_jours):.1f}** nouveaux / jour")
-                st.metric("Capacité Cible A", f"{c_a:.1f} RDV/sem")
-
-            with t_b:
-                st.warning(f"### Besoin B : **{(f_b/in_jours):.1f}** nouveaux / jour")
-                st.metric("Capacité Cible B", f"{c_b:.1f} RDV/sem")
-
-    except Exception as e:
-        st.error(f"❌ Erreur : {e}")
-
-# --- APPEL ---
-if 'page' not in st.session_state: st.session_state.page = "accueil"
-if st.session_state.page == "stats_patients": render_stats_patients()
-
