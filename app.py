@@ -659,18 +659,47 @@ elif st.session_state.page == "tarifs":
                     lambda r: calculer_tendance(r["CA 90j"], r["CA 365j"], jo_90, jo_365), axis=1
                 )
 
-                st.dataframe(
-                    tab_perf[[nom_col_code, "Prestation", "Tendance", "CA Global", "CA 365j", "CA 90j"]].sort_values("CA Global", ascending=False),
-                    use_container_width=True,
-                    hide_index=True,
-                    column_config={
-                        nom_col_code: "Code",
-                        "Prestation": "Nom de la prestation",
-                        "CA Global": st.column_config.NumberColumn("CA Global", format="%.2f CHF"),
-                        "CA 365j": st.column_config.NumberColumn("CA 365j", format="%.2f CHF"),
-                        "CA 90j": st.column_config.NumberColumn("CA 90j", format="%.2f CHF")
-                    }
+                tab_sorted = tab_perf.sort_values("CA Global", ascending=False)
+
+                def tendance_html(t):
+                    if "Hausse" in t:   color = "#1a7f3c"
+                    elif "Baisse" in t: color = "#c0392b"
+                    else:               color = "#666666"
+                    return f'<span style="color:{color};font-weight:600">{t}</span>'
+
+                rows = ""
+                for _, r in tab_sorted.iterrows():
+                    code = str(r[nom_col_code])
+                    nom  = str(r["Prestation"])
+                    rows += (
+                        f'<tr>'
+                        f'<td><span title="{nom}" style="cursor:help;border-bottom:1px dotted #999">{code}</span></td>'
+                        f'<td>{tendance_html(r["Tendance"])}</td>'
+                        f'<td style="text-align:right">{r["CA Global"]:,.2f}</td>'
+                        f'<td style="text-align:right">{r["CA 365j"]:,.2f}</td>'
+                        f'<td style="text-align:right">{r["CA 90j"]:,.2f}</td>'
+                        f'</tr>'
+                    )
+
+                html_table = (
+                    "<style>"
+                    ".tarif-table{width:100%;border-collapse:collapse;font-size:0.9rem}"
+                    ".tarif-table th{background:#f0f2f6;padding:8px 12px;text-align:left;border-bottom:2px solid #ddd;white-space:nowrap}"
+                    ".tarif-table th:nth-child(n+3){text-align:right}"
+                    ".tarif-table td{padding:6px 12px;border-bottom:1px solid #eee}"
+                    ".tarif-table tr:hover td{background:#f8f9fa}"
+                    "</style>"
+                    "<table class='tarif-table'>"
+                    "<thead><tr>"
+                    "<th>Code</th><th>Tendance</th>"
+                    "<th>CA Global (CHF)</th><th>CA 365j (CHF)</th><th>CA 90j (CHF)</th>"
+                    "</tr></thead>"
+                    f"<tbody>{rows}</tbody>"
+                    "</table>"
+                    "<p style='font-size:0.75rem;color:#999;margin-top:4px'>"
+                    "ℹ️ Survolez le code pour voir le nom de la prestation</p>"
                 )
+                st.markdown(html_table, unsafe_allow_html=True)
             else:
                 st.warning("Aucune donnée disponible pour cette sélection.")
                 
