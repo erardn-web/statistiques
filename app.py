@@ -402,18 +402,28 @@ def render_stats_patients():
         if btn_go:
             st.session_state.capa_df = edited_df
 
-            def calc_needs(df_p):
+            def calc_capa(df_p):
                 annuel = (df_p['Places/Sem'] * df_p['Semaines/an']).sum()
-                capa_h = (annuel * (in_occup/100)) / 52.14
-                # Soustraire les places permanentes occupées par les chroniques
-                capa_dispo = max(0, capa_h - data['rdv_chron_sem'])
-                flux_h = (capa_dispo * in_rythme) / in_seances
-                return capa_h, capa_dispo, flux_h
+                return (annuel * (in_occup/100)) / 52.14
 
             df_act = edited_df[edited_df['Places/Sem'] > 0]
-            c_tot, cd_tot, f_tot = calc_needs(df_act)
-            c_a,   cd_a,   f_a   = calc_needs(df_act[df_act['Cabinet'] == "A"])
-            c_b,   cd_b,   f_b   = calc_needs(df_act[df_act['Cabinet'] == "B"])
+            c_tot = calc_capa(df_act)
+            c_a   = calc_capa(df_act[df_act['Cabinet'] == "A"])
+            c_b   = calc_capa(df_act[df_act['Cabinet'] == "B"])
+
+            # Les chroniques sont soustraits une seule fois au niveau global
+            # puis répartis proportionnellement entre cabinets
+            chron = data['rdv_chron_sem']
+            prop_a = c_a / c_tot if c_tot > 0 else 0.5
+            prop_b = c_b / c_tot if c_tot > 0 else 0.5
+
+            cd_tot = max(0, c_tot - chron)
+            cd_a   = max(0, c_a - chron * prop_a)
+            cd_b   = max(0, c_b - chron * prop_b)
+
+            f_tot = (cd_tot * in_rythme) / in_seances
+            f_a   = (cd_a   * in_rythme) / in_seances
+            f_b   = (cd_b   * in_rythme) / in_seances
 
             st.markdown("---")
 
