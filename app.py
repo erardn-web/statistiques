@@ -159,9 +159,26 @@ def render_stats_patients():
             )
             p_stats['jours_vie'] = (p_stats['date_max'] - p_stats['date_min']).dt.days
 
-            # --- 2. RYTHME HEBDOMADAIRE (patients avec suivi >= 7j) ---
-            p_suivis = p_stats[p_stats['jours_vie'] >= 7]
-            rythme = p_suivis['nb_seances'].sum() / (p_suivis['jours_vie'].sum() / 7) if not p_suivis.empty else 1.1
+            # --- 2. RYTHME HEBDOMADAIRE (semaines actives uniquement) ---
+            # Problème de l'ancienne méthode : jours_vie inclut les semaines sans séance
+            # (fin de traitement, pauses), ce qui tire le rythme artificiellement vers le bas.
+            # Nouvelle approche : pour chaque patient, on compte le nombre de semaines
+            # où il a eu au moins une séance (semaines actives), puis on divise
+            # le nombre de séances par ce nombre de semaines actives.
+            def rythme_semaines_actives(group):
+                semaines = group["_date"].dt.isocalendar().apply(
+                    lambda r: f"{r['year']}-{r['week']:02d}", axis=1
+                ).nunique()
+                return len(group) / semaines if semaines > 0 else 0
+
+            # Uniquement patients avec au moins 2 semaines actives distinctes
+            rythmes_pat = df_f.groupby("_pat").filter(
+                lambda g: g["_date"].dt.isocalendar().apply(
+                    lambda r: f"{r['year']}-{r['week']:02d}", axis=1
+                ).nunique() >= 2
+            ).groupby("_pat").apply(rythme_semaines_actives)
+
+            rythme = rythmes_pat.mean() if not rythmes_pat.empty else 1.1
 
             # --- 3. MOYENNE SÉANCES/TRAITEMENT (patients présumés terminés uniquement) ---
             # Un patient est "terminé" si sa dernière séance date de plus de delai_fin jours
