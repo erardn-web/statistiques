@@ -225,14 +225,16 @@ def render_stats_patients():
                 return not any(seuil_avant <= d < date_bilan for d in physio_dates[pat])
 
             # Garder un seul événement par patient pour 7350 (le premier bilan vraiment nouveau)
+            # Pas de drop_duplicates : un patient peut avoir plusieurs traitements distincts.
+            # est_vraiment_nouveau filtre déjà les 7350 d'un épisode en cours.
             nouveaux_7350 = (
                 df_7350
                 .sort_values("_date")
                 .loc[lambda df: df.apply(lambda r: est_vraiment_nouveau(r["_pat"], r["_date"], delai_fin), axis=1)]
-                .drop_duplicates(subset=["_pat"], keep="first")
             )
 
-            # 25.110 : première séance du patient, sans filtre fantôme
+            # 25.110 : première séance du patient par traitement distinct
+            # On garde la première apparition uniquement (pas de code bilan disponible)
             nouveaux_25 = df_25.sort_values("_date").drop_duplicates(subset=["_pat"], keep="first")
 
             def stats_periode(jours):
