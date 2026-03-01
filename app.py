@@ -22,7 +22,12 @@ def jours_ouvres(date_debut, date_fin, jours_cabinet=None):
 def calculer_tendance(ca_90j, ca_365j, jo_90, jo_365):
     """Compare le taux journalier (CHF/jour ouvré) des 90 derniers jours
     vs les 365 derniers jours. Neutre aux vacances, Noël, ponts, etc.
-    Seuils : variation > +10% → Hausse, < -10% → Baisse."""
+    Seuils : variation > +10% → Hausse, < -10% → Baisse.
+    Si pas d'historique sur la période de référence → Nouveau."""
+    if ca_90j > 0 and ca_365j == 0:
+        return "🆕 Nouveau"
+    if ca_90j == 0 and ca_365j == 0:
+        return "—"
     if ca_365j > 0 and jo_365 > 0 and jo_90 > 0:
         taux_90  = ca_90j  / jo_90
         taux_365 = ca_365j / jo_365
@@ -30,7 +35,7 @@ def calculer_tendance(ca_90j, ca_365j, jo_90, jo_365):
         if variation <= -10: return f"↘️ Baisse ({variation:+.1f}%/j)"
         if variation >=  10: return f"↗️ Hausse ({variation:+.1f}%/j)"
         return f"➡️ Stable ({variation:+.1f}%/j)"
-    return "N/A"
+    return "—"
 
 def valider_colonnes(df, nb_min, nom_module):
     """Valide que le DataFrame a assez de colonnes, lève une erreur claire sinon."""
@@ -685,6 +690,7 @@ elif st.session_state.page == "tarifs":
                 def tendance_html(t):
                     if "Hausse" in t:   color = "#1a7f3c"
                     elif "Baisse" in t: color = "#c0392b"
+                    elif "Nouveau" in t: color = "#0066cc"
                     else:               color = "#666666"
                     return f'<span style="color:{color};font-weight:600">{t}</span>'
 
