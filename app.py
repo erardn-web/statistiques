@@ -89,66 +89,117 @@ def render_stats_patients():
         st.rerun()
 
     st.sidebar.markdown("---")
-    uploaded_file = st.sidebar.file_uploader("📂 Déposer l'export Excel", type="xlsx", key="uploader_v11_1")
+    st.sidebar.markdown("**📂 Fichier(s) de prestations**")
+    uploaded_file  = st.sidebar.file_uploader("Export récent (obligatoire)", type="xlsx", key="uploader_flux_1")
+    uploaded_file2 = st.sidebar.file_uploader("Export plus ancien (optionnel, pour étendre l'historique)", type="xlsx", key="uploader_flux_2")
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("**⚙️ Paramètres**")
+    delai_fin_traitement = st.sidebar.number_input(
+        "Délai fin de traitement présumé (jours sans séance) :",
+        min_value=14, max_value=180, value=60, step=7,
+        help="Un patient dont la dernière séance date de plus de N jours est considéré comme terminé. Utilisé pour calculer la moyenne de séances/traitement."
+    )
 
     st.title("👥 Pilotage du Flux Patients")
 
     if not uploaded_file:
-        st.info("👋 Chargez un fichier Excel pour activer l'analyse comparative.")
+        st.info("👋 Chargez au moins le fichier récent pour activer l'analyse.")
         return
 
     try:
         @st.cache_data
-        def get_full_analysis(file):
-            df = pd.read_excel(file, sheet_name='Prestation')
+        def lire_prestations(f):
+            df = pd.read_excel(f, sheet_name='Prestation')
             df.columns = [str(c).strip() for c in df.columns]
-            
-            c_date, c_tarif, c_pat, c_mont = df.columns[1], df.columns[2], df.columns[8], df.columns[11]
-            df[c_date] = pd.to_datetime(df[c_date], errors='coerce')
-            df[c_tarif] = df[c_tarif].astype(str).str.strip()
-            
-            codes = ["7301", "7311", "25.110"]
-            df_f = df[(df[c_mont] > 0) & (df[c_tarif].isin(codes))].dropna(subset=[c_date, c_pat]).copy()
-            
-            # --- 1. CALCULS HISTORIQUES ---
-            p_stats = df_f.groupby(c_pat).agg(
-                nb_seances=(c_pat, 'size'),
-                date_min=(c_date, 'min'),
-                date_max=(c_date, 'max')
+            return df
+
+        @st.cache_data
+        def get_full_analysis(file1, file2, delai_fin):
+            def parser(f):
+                df = lire_prestations(f)
+                c_date, c_tarif, c_pat, c_mont = df.columns[1], df.columns[2], df.columns[8], df.columns[11]
+                df[c_date] = pd.to_datetime(df[c_date], errors='coerce')
+                df[c_tarif] = df[c_tarif].astype(str).str.strip()
+                codes = ["7301", "7311", "25.110"]
+                df_f = df[(df[c_mont] > 0) & (df[c_tarif].isin(codes))].dropna(subset=[c_date, c_pat]).copy()
+                df_f = df_f.rename(columns={c_date: "_date", c_pat: "_pat"})
+                return df_f[["_date", "_pat"]]
+
+            df_f = parser(file1)
+            if file2 is not None:
+                df_f2 = parser(file2)
+                df_f = pd.concat([df_f, df_f2]).drop_duplicates().reset_index(drop=True)
+                nb_fichiers = 2
+            else:
+                nb_fichiers = 1
+
+            df_f = df_f.sort_values("_date")
+            derniere_date = df_f["_date"].max()
+            premiere_date = df_f["_date"].min()
+
+            # --- 1. STATS PAR PATIENT ---
+            p_stats = df_f.groupby("_pat").agg(
+                nb_seances=("_pat", 'size'),
+                date_min=("_date", 'min'),
+                date_max=("_date", 'max')
             )
-            
             p_stats['jours_vie'] = (p_stats['date_max'] - p_stats['date_min']).dt.days
+
+            # --- 2. RYTHME HEBDOMADAIRE (patients avec suivi >= 7j) ---
             p_suivis = p_stats[p_stats['jours_vie'] >= 7]
             rythme = p_suivis['nb_seances'].sum() / (p_suivis['jours_vie'].sum() / 7) if not p_suivis.empty else 1.1
 
-            # --- 2. CALCUL DU FLUX RÉEL ---
-            derniere_date = df_f[c_date].max()
-            
+            # --- 3. MOYENNE SÉANCES/TRAITEMENT (patients présumés terminés uniquement) ---
+            # Un patient est "terminé" si sa dernière séance date de plus de delai_fin jours
+            # → élimine les patients récents dont on ne connaît pas encore le nombre final de séances
+            seuil_termine = derniere_date - timedelta(days=delai_fin)
+            p_termines = p_stats[p_stats['date_max'] <= seuil_termine]
+            moy_seances = p_termines['nb_seances'].mean() if not p_termines.empty else p_stats['nb_seances'].mean()
+            nb_termines = len(p_termines)
+
+            # --- 4. FLUX NOUVEAUX PATIENTS ---
+            # Exclure les patients dont la première séance est dans les 4 premières semaines
+            # de l'export (biais "fantômes" = anciens patients qui semblent nouveaux)
+            seuil_fantomes = premiere_date + timedelta(days=28)
+
             def stats_periode(jours):
                 seuil = derniere_date - timedelta(days=jours)
-                # Un patient est "nouveau" si sa toute première séance est dans la zone
-                nouveaux = p_stats[p_stats['date_min'] >= seuil]
+                nouveaux = p_stats[(p_stats['date_min'] >= seuil) & (p_stats['date_min'] > seuil_fantomes)]
                 count = len(nouveaux)
-                jours_ouvres = (jours / 7) * 5
-                return count, count / jours_ouvres if jours_ouvres > 0 else 0
+                jo = jours_ouvres(seuil, derniere_date)
+                return count, count / jo if jo > 0 else 0
 
             return {
-                "moy_seances": p_stats['nb_seances'].mean(),
+                "moy_seances": moy_seances,
+                "nb_termines": nb_termines,
                 "rythme_reel": rythme,
-                "flux_30": stats_periode(30),
-                "flux_60": stats_periode(60),
+                "flux_30":  stats_periode(30),
+                "flux_60":  stats_periode(60),
                 "flux_120": stats_periode(120),
-                "derniere_date": derniere_date
+                "derniere_date": derniere_date,
+                "premiere_date": premiere_date,
+                "nb_fichiers": nb_fichiers,
+                "delai_fin": delai_fin,
             }
 
-        data = get_full_analysis(uploaded_file)
+        data = get_full_analysis(uploaded_file, uploaded_file2, delai_fin_traitement)
 
-        # --- AFFICHAGE ANALYSE RÉELLE ---
+        # --- INFOS EXPORT ---
+        periode = f"{data['premiere_date'].strftime('%d.%m.%Y')} → {data['derniere_date'].strftime('%d.%m.%Y')}"
+        nb_mois = round((data['derniere_date'] - data['premiere_date']).days / 30.5)
+        if data['nb_fichiers'] == 2:
+            st.success(f"✅ **2 fichiers fusionnés** — Historique de **{nb_mois} mois** ({periode})")
+        else:
+            st.info(f"📄 **1 fichier** — Historique de **{nb_mois} mois** ({periode})")
+
+        st.caption(f"Moyenne séances/traitement calculée sur **{data['nb_termines']} patients terminés** (dernière séance > {data['delai_fin']}j avant la fin de l'export)")
+
+        # --- AFFICHAGE FLUX ---
         st.subheader(f"📈 Recrutement Réel (Calculé au {data['derniere_date'].strftime('%d/%m/%Y')})")
         c_r1, c_r2, c_r3 = st.columns(3)
-        c_r1.metric("Derniers 30j", f"{data['flux_30'][0]} pat.", f"{data['flux_30'][1]:.1f} / jour")
-        c_r2.metric("Derniers 60j", f"{data['flux_60'][0]} pat.", f"{data['flux_60'][1]:.1f} / jour")
-        c_r3.metric("Derniers 120j", f"{data['flux_120'][0]} pat.", f"{data['flux_120'][1]:.1f} / jour")
+        c_r1.metric("Derniers 30j", f"{data['flux_30'][0]} pat.", f"{data['flux_30'][1]:.2f} / j ouvré")
+        c_r2.metric("Derniers 60j", f"{data['flux_60'][0]} pat.", f"{data['flux_60'][1]:.2f} / j ouvré")
+        c_r3.metric("Derniers 120j", f"{data['flux_120'][0]} pat.", f"{data['flux_120'][1]:.2f} / j ouvré")
 
         # --- FORMULAIRE CONFIGURATION ---
         with st.form("form_v11_1"):
