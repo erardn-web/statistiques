@@ -272,21 +272,23 @@ def render_stats_patients():
                 in_occup = st.slider("Taux d'occupation visé (%)", 50, 100, 85)
                 in_jours = st.slider("Jours d'ouverture / semaine", 1, 6, 5)
 
-            col_btn1, col_btn2 = st.columns(2)
-            with col_btn1:
-                btn_go = st.form_submit_button("🚀 CALCULER ET COMPARER", use_container_width=True, type="primary")
-            with col_btn2:
-                import io
-                buf = io.BytesIO()
-                edited_df.to_excel(buf, index=False, engine='openpyxl')
-                buf.seek(0)
-                st.download_button(
-                    label="💾 Sauvegarder la configuration",
-                    data=buf,
-                    file_name="config_thérapeutes.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    use_container_width=True
-                )
+            btn_go = st.form_submit_button("🚀 CALCULER ET COMPARER", use_container_width=True, type="primary")
+            # Sauvegarder l'état du tableau à chaque rendu pour le download_button hors formulaire
+            st.session_state.capa_df_current = edited_df
+
+        # --- BOUTON SAUVEGARDER (hors formulaire, car st.download_button interdit dans st.form) ---
+        if 'capa_df_current' in st.session_state:
+            import io
+            buf = io.BytesIO()
+            st.session_state.capa_df_current.to_excel(buf, index=False, engine='openpyxl')
+            buf.seek(0)
+            st.download_button(
+                label="💾 Sauvegarder la configuration (.xlsx)",
+                data=buf,
+                file_name="config_thérapeutes.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                help="Téléchargez ce fichier pour le recharger la prochaine fois sans tout ressaisir."
+            )
 
         if btn_go:
             st.session_state.capa_df = edited_df
