@@ -607,6 +607,11 @@ elif st.session_state.page == "tarifs":
 
             view_mode = st.radio("Affichage :", ["Profession", "Code tarifaire"], horizontal=True)
             chart_type = st.radio("Style :", ["Barres", "Courbes"], horizontal=True)
+            methode_tarif = st.radio(
+                "Tendance — comparer les 90 derniers jours avec :",
+                ["📅 Les 365 derniers jours (méthode actuelle)", "📆 Les mêmes 90 jours de l'année précédente (anti-saisonnalité)"],
+                horizontal=True, key="methode_tarif"
+            )
 
             df_filtered = df[df[nom_col_code].astype(str).isin(selection_codes)].copy()
 
@@ -637,12 +642,6 @@ elif st.session_state.page == "tarifs":
                 st.markdown(f"### 📈 Performance par Tarif (Base : {reference_date.strftime('%d.%m.%Y')})")
 
                 jours_cabinet_t = set(df_filtered[nom_col_date].dt.date.unique())
-
-                methode_tarif = st.radio(
-                    "Comparer les 90 derniers jours avec :",
-                    ["📅 Les 365 derniers jours (méthode actuelle)", "📆 Les mêmes 90 jours de l'année précédente (anti-saisonnalité)"],
-                    horizontal=True, key="methode_tarif"
-                )
                 annee_sur_annee_t = "précédente" in methode_tarif
 
                 t_90j = reference_date - pd.DateOffset(days=90)
