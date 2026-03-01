@@ -523,7 +523,7 @@ elif st.session_state.page == "medecins":
                     trend_layer = base.transform_regression('M_Date', 'ca', groupby=['medecin']).mark_line(size=4, strokeDash=[6, 4])
                     chart = data_layer if visibility == "Données" else trend_layer if visibility == "Ligne" else data_layer + trend_layer
                     st.altair_chart(chart, use_container_width=True)
-                    st.dataframe(tab_final[tab_final["medecin"].isin(choix)].sort_values("CA Global", ascending=False)[["medecin", "CA Global", "CA 365j", "Taux 365j (CHF/j)", "CA 90j", "Taux 90j (CHF/j)", "Tendance"]], use_container_width=True, hide_index=True)
+                    st.dataframe(tab_final[tab_final["medecin"].isin(choix)].sort_values("CA Global", ascending=False)[["medecin", "Tendance", "CA Global", "CA 365j", "Taux 365j (CHF/j)", "CA 90j", "Taux 90j (CHF/j)"]], use_container_width=True, hide_index=True)
         except Exception as e: st.error(f"Erreur technique : {e}")
 
 # ==========================================
