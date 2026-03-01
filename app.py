@@ -11,13 +11,22 @@ st.set_page_config(page_title="Analyseur de Facturation Pro", layout="wide", pag
 MOTS_EXCLUSION = {"BERNOIS", "NEUCHATELOIS", "VALAISANS", "GENEVOIS", "VAUDOIS", "FRIBOURGEOIS"}
 COULEURS_PROF = {"Physiothérapie": "#00CCFF", "Ergothérapie": "#FF9900", "Massage": "#00CC96", "Autre": "#AB63FA"}
 
-def calculer_tendance(ca_90j, ca_365j):
-    """Calcul unifié de la tendance (partagé entre modules Médecins et Tarifs)"""
-    if ca_365j > 0:
-        ratio = (ca_90j / ca_365j) * 100
-        if ratio <= 23: return f"↘️ Baisse ({ratio:.1f}%)"
-        if ratio >= 27: return f"↗️ Hausse ({ratio:.1f}%)"
-        return "➡️ Stable"
+def jours_ouvres(date_debut, date_fin):
+    """Nombre de jours ouvrés lun-ven entre deux dates (sans gestion des fériés cantonaux,
+    mais élimine déjà l'essentiel des biais weekends/ponts)."""
+    return max(len(pd.bdate_range(date_debut, date_fin)), 1)
+
+def calculer_tendance(ca_90j, ca_365j, jo_90, jo_365):
+    """Compare le taux journalier (CHF/jour ouvré) des 90 derniers jours
+    vs les 365 derniers jours. Neutre aux vacances, Noël, ponts, etc.
+    Seuils : variation > +10% → Hausse, < -10% → Baisse."""
+    if ca_365j > 0 and jo_365 > 0 and jo_90 > 0:
+        taux_90  = ca_90j  / jo_90
+        taux_365 = ca_365j / jo_365
+        variation = (taux_90 - taux_365) / taux_365 * 100
+        if variation <= -10: return f"↘️ Baisse ({variation:+.1f}%/j)"
+        if variation >=  10: return f"↗️ Hausse ({variation:+.1f}%/j)"
+        return f"➡️ Stable ({variation:+.1f}%/j)"
     return "N/A"
 
 def valider_colonnes(df, nb_min, nom_module):
@@ -479,11 +488,17 @@ elif st.session_state.page == "medecins":
             
             if not df_m.empty:
                 t_90j, t_365j = ajd - pd.DateOffset(days=90), ajd - pd.DateOffset(days=365)
+                jo_90  = jours_ouvres(t_90j,  ajd)
+                jo_365 = jours_ouvres(t_365j, ajd)
                 stats_ca = df_m.groupby("medecin")["ca"].sum().reset_index(name="CA Global")
                 ca_90 = df_m[df_m["date_f"] >= t_90j].groupby("medecin")["ca"].sum().reset_index(name="CA 90j")
                 ca_365 = df_m[df_m["date_f"] >= t_365j].groupby("medecin")["ca"].sum().reset_index(name="CA 365j")
                 tab_final = stats_ca.merge(ca_90, on="medecin", how="left").merge(ca_365, on="medecin", how="left").fillna(0)
-                tab_final["Tendance"] = tab_final.apply(lambda r: calculer_tendance(r["CA 90j"], r["CA 365j"]), axis=1)
+                tab_final["Taux 90j (CHF/j)"]  = (tab_final["CA 90j"]  / jo_90).round(1)
+                tab_final["Taux 365j (CHF/j)"] = (tab_final["CA 365j"] / jo_365).round(1)
+                tab_final["Tendance"] = tab_final.apply(
+                    lambda r: calculer_tendance(r["CA 90j"], r["CA 365j"], jo_90, jo_365), axis=1
+                )
 
                 st.markdown("### 🏆 Sélection et Visualisation")
                 c1, c2, c3 = st.columns([1, 1, 1.5]) 
@@ -508,7 +523,7 @@ elif st.session_state.page == "medecins":
                     trend_layer = base.transform_regression('M_Date', 'ca', groupby=['medecin']).mark_line(size=4, strokeDash=[6, 4])
                     chart = data_layer if visibility == "Données" else trend_layer if visibility == "Ligne" else data_layer + trend_layer
                     st.altair_chart(chart, use_container_width=True)
-                    st.dataframe(tab_final[tab_final["medecin"].isin(choix)].sort_values("CA Global", ascending=False)[["medecin", "CA Global", "CA 365j", "CA 90j", "Tendance"]], use_container_width=True, hide_index=True)
+                    st.dataframe(tab_final[tab_final["medecin"].isin(choix)].sort_values("CA Global", ascending=False)[["medecin", "CA Global", "CA 365j", "Taux 365j (CHF/j)", "CA 90j", "Taux 90j (CHF/j)", "Tendance"]], use_container_width=True, hide_index=True)
         except Exception as e: st.error(f"Erreur technique : {e}")
 
 # ==========================================
@@ -592,14 +607,17 @@ elif st.session_state.page == "tarifs":
                 
                 t_90j = reference_date - pd.DateOffset(days=90)
                 t_365j = reference_date - pd.DateOffset(days=365)
+                jo_90  = jours_ouvres(t_90j,  reference_date)
+                jo_365 = jours_ouvres(t_365j, reference_date)
                 
                 stats_global = df_filtered.groupby(nom_col_code)[nom_col_somme].sum().reset_index(name="CA Global")
                 ca_90 = df_filtered[df_filtered[nom_col_date] >= t_90j].groupby(nom_col_code)[nom_col_somme].sum().reset_index(name="CA 90j")
                 ca_365 = df_filtered[df_filtered[nom_col_date] >= t_365j].groupby(nom_col_code)[nom_col_somme].sum().reset_index(name="CA 365j")
                 
                 tab_perf = stats_global.merge(ca_365, on=nom_col_code, how="left").merge(ca_90, on=nom_col_code, how="left").fillna(0)
-                
-                tab_perf["Tendance"] = tab_perf.apply(lambda r: calculer_tendance(r["CA 90j"], r["CA 365j"]), axis=1)
+                tab_perf["Tendance"] = tab_perf.apply(
+                    lambda r: calculer_tendance(r["CA 90j"], r["CA 365j"], jo_90, jo_365), axis=1
+                )
                 
                 st.dataframe(
                     tab_perf.sort_values("CA Global", ascending=False),
