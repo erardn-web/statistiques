@@ -646,7 +646,7 @@ elif st.session_state.page == "tarifs":
                 # 2. TABLEAU DES TENDANCES
                 st.markdown(f"### 📈 Performance par Tarif (Base : {reference_date.strftime('%d.%m.%Y')})")
 
-                jours_cabinet_t = set(df_filtered[nom_col_date].dt.date.unique())
+                jours_cabinet_t = set(df[nom_col_date].dt.date.unique())  # Jours réels du cabinet, indépendants des filtres actifs
                 annee_sur_annee_t = "précédente" in methode_tarif
 
                 t_90j = reference_date - pd.DateOffset(days=90)
