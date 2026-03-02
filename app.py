@@ -510,41 +510,37 @@ if st.session_state.page == "accueil":
             gen_file = st.file_uploader("Export Factures pour génération (.xlsx)", type="xlsx", key="config_gen_upload")
             if gen_file is not None:
                 try:
+                    import io
                     @st.cache_data
                     def extraire_medecins(f):
                         df = pd.read_excel(f, header=0)
                         return sorted(df.iloc[:, 7].dropna().astype(str).str.strip().unique().tolist())
                     noms = extraire_medecins(gen_file)
                     st.info(f"{len(noms)} médecins/entités trouvés dans l'export.")
-                    if st.button("⬇️ Générer config.xlsx", type="primary"):
-                        import io
-                        # Onglet Médecins : col A = nom, col B-D vides
-                        df_med_gen = pd.DataFrame({
-                            "Nom canonique (col A)": noms,
-                            "Variante 1 (col B)": [""] * len(noms),
-                            "Variante 2 (col C)": [""] * len(noms),
-                            "Variante 3 (col D)": [""] * len(noms),
-                        })
-                        # Onglet Thérapeutes
-                        if 'capa_df' in st.session_state:
-                            df_ther_gen = st.session_state.capa_df.copy()
-                        else:
-                            df_ther_gen = pd.DataFrame([
-                                {"Thérapeute": f"Thérapeute {i}", "Cabinet": "A" if i <= 6 else "B",
-                                 "Places/Sem": 0, "Semaines/an": 43} for i in range(1, 13)
-                            ])
-                        buf = io.BytesIO()
-                        with pd.ExcelWriter(buf, engine='openpyxl') as writer:
-                            df_med_gen.to_excel(writer, sheet_name='Medecins', index=False)
-                            df_ther_gen.to_excel(writer, sheet_name='Thérapeutes', index=False)
-                        buf.seek(0)
-                        st.download_button(
-                            label="💾 Télécharger config_cabinet.xlsx",
-                            data=buf,
-                            file_name="config_cabinet.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                            use_container_width=True
-                        )
+                    # Générer le fichier directement (pas de bouton intermédiaire)
+                    df_med_gen = pd.DataFrame({
+                        "Nom canonique": noms,
+                        "Variante 1": [""] * len(noms),
+                        "Variante 2": [""] * len(noms),
+                        "Variante 3": [""] * len(noms),
+                    })
+                    df_ther_gen = st.session_state.capa_df.copy() if 'capa_df' in st.session_state else pd.DataFrame([
+                        {"Thérapeute": f"Thérapeute {i}", "Cabinet": "A" if i <= 6 else "B",
+                         "Places/Sem": 0, "Semaines/an": 43} for i in range(1, 13)
+                    ])
+                    buf = io.BytesIO()
+                    with pd.ExcelWriter(buf, engine='openpyxl') as writer:
+                        df_med_gen.to_excel(writer, sheet_name='Medecins', index=False)
+                        df_ther_gen.to_excel(writer, sheet_name='Thérapeutes', index=False)
+                    buf.seek(0)
+                    st.download_button(
+                        label="💾 Télécharger config_cabinet.xlsx",
+                        data=buf,
+                        file_name="config_cabinet.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        use_container_width=True,
+                        type="primary"
+                    )
                 except Exception as e:
                     st.error(f"Erreur génération : {e}")
 
