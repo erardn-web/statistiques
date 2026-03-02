@@ -469,45 +469,22 @@ if st.session_state.page == "accueil":
     # ==========================================
     # SECTION CONFIGURATION CABINET
     # ==========================================
-    with st.expander("⚙️ Configuration du cabinet" + (" ✅" if st.session_state.config_loaded else " — optionnel, recommandé"), expanded=not st.session_state.config_loaded):
-        st.markdown("**Chargez votre fichier de configuration pour activer le regroupement des médecins et pré-remplir les thérapeutes.**")
-        col_load, col_gen = st.columns(2)
+    with st.expander("⚙️ Configuration du cabinet" + (" ✅" if st.session_state.config_loaded else " — à faire une seule fois"), expanded=not st.session_state.config_loaded):
 
-        with col_load:
-            st.markdown("##### 📥 Charger la configuration")
-            config_file = st.file_uploader("Fichier config cabinet (.xlsx)", type="xlsx", key="config_cabinet_upload")
-            if config_file is not None:
-                try:
-                    xl = pd.ExcelFile(config_file)
-                    # Onglet Médecins → mapping variantes → canonique
-                    if "Medecins" in xl.sheet_names:
-                        df_med = pd.read_excel(config_file, sheet_name="Medecins", header=0, dtype=str)
-                        mapping = {}
-                        for _, row in df_med.iterrows():
-                            canonique = str(row.iloc[0]).strip() if pd.notna(row.iloc[0]) else None
-                            if not canonique or canonique == 'nan':
-                                continue
-                            for val in row.iloc[1:]:
-                                variante = str(val).strip() if pd.notna(val) else None
-                                if variante and variante != 'nan':
-                                    mapping[variante] = canonique
-                        st.session_state.config_medecins = mapping
-                        st.success(f"✅ {len(df_med)} médecins chargés ({len(mapping)} variantes mappées)")
-                    # Onglet Thérapeutes → pré-remplir capa_df
-                    if "Thérapeutes" in xl.sheet_names:
-                        df_ther = pd.read_excel(config_file, sheet_name="Thérapeutes")
-                        cols_ok = {"Thérapeute", "Cabinet", "Places/Sem", "Semaines/an"}
-                        if cols_ok.issubset(set(df_ther.columns)):
-                            st.session_state.capa_df = df_ther[list(cols_ok)].copy()
-                            st.success(f"✅ {len(df_ther)} thérapeutes chargés")
-                    st.session_state.config_loaded = True
-                except Exception as e:
-                    st.error(f"Erreur lecture config : {e}")
+        # --- PREMIÈRE UTILISATION OU MISE À JOUR ---
+        if not st.session_state.config_loaded:
+            st.markdown("""
+### 🚀 Première utilisation — 3 étapes
 
-        with col_gen:
-            st.markdown("##### 📤 Générer le fichier de configuration")
-            st.caption("Chargez un export Factures pour extraire la liste des médecins.")
-            gen_file = st.file_uploader("Export Factures pour génération (.xlsx)", type="xlsx", key="config_gen_upload")
+Ce fichier de configuration est **à créer une seule fois**, puis à recharger à chaque session.  
+Il contient la liste de vos médecins (avec leurs variantes de noms) et la liste de vos thérapeutes.
+""")
+            st.markdown("---")
+
+            # ÉTAPE 1
+            st.markdown("#### Étape 1 — Générer le fichier vierge")
+            st.caption("Chargez n'importe quel export Factures récent. L'application en extrait automatiquement la liste de vos médecins.")
+            gen_file = st.file_uploader("📂 Export Factures (.xlsx)", type="xlsx", key="config_gen_upload")
             if gen_file is not None:
                 try:
                     import io
@@ -516,8 +493,6 @@ if st.session_state.page == "accueil":
                         df = pd.read_excel(f, header=0)
                         return sorted(df.iloc[:, 7].dropna().astype(str).str.strip().unique().tolist())
                     noms = extraire_medecins(gen_file)
-                    st.info(f"{len(noms)} médecins/entités trouvés dans l'export.")
-                    # Générer le fichier directement (pas de bouton intermédiaire)
                     df_med_gen = pd.DataFrame({
                         "Nom canonique": noms,
                         "Variante 1": [""] * len(noms),
@@ -533,6 +508,7 @@ if st.session_state.page == "accueil":
                         df_med_gen.to_excel(writer, sheet_name='Medecins', index=False)
                         df_ther_gen.to_excel(writer, sheet_name='Thérapeutes', index=False)
                     buf.seek(0)
+                    st.success(f"✅ {len(noms)} médecins extraits — téléchargez le fichier ci-dessous.")
                     st.download_button(
                         label="💾 Télécharger config_cabinet.xlsx",
                         data=buf,
@@ -542,7 +518,68 @@ if st.session_state.page == "accueil":
                         type="primary"
                     )
                 except Exception as e:
-                    st.error(f"Erreur génération : {e}")
+                    st.error(f"Erreur : {e}")
+
+            st.markdown("---")
+
+            # ÉTAPE 2
+            st.markdown("#### Étape 2 — Remplir le fichier Excel")
+            st.markdown("""
+Ouvrez `config_cabinet.xlsx` et remplissez les deux onglets :
+
+**Onglet `Medecins`**  
+- Colonne A : nom tel qu'il doit apparaître dans l'application  
+- Colonnes B, C, D : variantes à fusionner vers ce nom  
+  *(ex. : A2 = `Lozano Pedro`, B2 = `Lozzano Pedro`, C2 = `Lozano P.`)*  
+- Supprimez les lignes des assureurs ou entités qui ne sont pas des médecins  
+  *(ex. : Vaudoise, Bernoise, CSS...)*
+
+**Onglet `Thérapeutes`**  
+- Remplacez les noms génériques par les vrais noms de vos thérapeutes  
+- Renseignez leur cabinet (A ou B), leurs places par semaine et semaines par an
+""")
+
+            st.markdown("---")
+
+            # ÉTAPE 3
+            st.markdown("#### Étape 3 — Charger le fichier complété")
+            st.caption("Une fois rempli, chargez le fichier ici. Il sera actif pour toute la session.")
+
+        else:
+            st.success("✅ Configuration cabinet active pour cette session.")
+            st.caption("Pour modifier la configuration, rechargez un fichier mis à jour ci-dessous.")
+
+        # UPLOADER (présent dans les deux états)
+        config_file = st.file_uploader(
+            "📂 Charger config_cabinet.xlsx" if not st.session_state.config_loaded else "🔄 Recharger une nouvelle configuration",
+            type="xlsx", key="config_cabinet_upload"
+        )
+        if config_file is not None:
+            try:
+                xl = pd.ExcelFile(config_file)
+                if "Medecins" in xl.sheet_names:
+                    df_med = pd.read_excel(config_file, sheet_name="Medecins", header=0, dtype=str)
+                    mapping = {}
+                    for _, row in df_med.iterrows():
+                        canonique = str(row.iloc[0]).strip() if pd.notna(row.iloc[0]) else None
+                        if not canonique or canonique == 'nan':
+                            continue
+                        for val in row.iloc[1:]:
+                            variante = str(val).strip() if pd.notna(val) else None
+                            if variante and variante != 'nan':
+                                mapping[variante] = canonique
+                    st.session_state.config_medecins = mapping
+                    st.success(f"✅ {len(df_med)} médecins chargés — {len(mapping)} variantes mappées")
+                if "Thérapeutes" in xl.sheet_names:
+                    df_ther = pd.read_excel(config_file, sheet_name="Thérapeutes")
+                    cols_ok = {"Thérapeute", "Cabinet", "Places/Sem", "Semaines/an"}
+                    if cols_ok.issubset(set(df_ther.columns)):
+                        st.session_state.capa_df = df_ther[list(cols_ok)].copy()
+                        st.success(f"✅ {len(df_ther)} thérapeutes chargés")
+                st.session_state.config_loaded = True
+                st.rerun()
+            except Exception as e:
+                st.error(f"Erreur lecture config : {e}")
 
     st.markdown("---")
     
