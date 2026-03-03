@@ -1203,10 +1203,11 @@ elif st.session_state.page == "retrocession":
 
     if st.session_state.get("retro_warning"):
         st.warning("⚠️ Soyez attentif au fait que des factures rejetées sur cette période peuvent encore être non-traitées et ne figurent donc pas dans ce décompte.")
-        if st.button("OK, j'en suis conscient", key="retro_warning_ok"):
+        if st.button("OK, j'en suis conscient", key="retro_warning_ok", type="primary"):
             st.session_state["retro_warning"] = False
             st.session_state["retro_warning_seen"] = True
             st.rerun()
+        st.stop()
 
     # --- SIDEBAR : FICHIERS ---
     st.sidebar.markdown("---")
