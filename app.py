@@ -1201,10 +1201,9 @@ elif st.session_state.page == "retrocession":
     st.title("🤝 Calcul de Rétrocession")
     st.caption("Calculez la rétrocession due par un·e thérapeute indépendant·e à partir de son export Ephysio.")
 
-    if st.session_state.get("retro_warning"):
+    if not st.session_state.get("retro_warning_seen"):
         st.warning("⚠️ Soyez attentif au fait que des factures rejetées sur cette période peuvent encore être non-traitées et ne figurent donc pas dans ce décompte.")
-        if st.button("OK, j'en suis conscient", key="retro_warning_ok", type="primary"):
-            st.session_state["retro_warning"] = False
+        if st.button("OK, j'en suis conscient", key="retro_warning_ok", type="primary", use_container_width=True):
             st.session_state["retro_warning_seen"] = True
             st.rerun()
         st.stop()
@@ -1216,8 +1215,7 @@ elif st.session_state.page == "retrocession":
         "Export Prestations du/de la thérapeute (.xlsx)",
         type="xlsx", key="retro_up"
     )
-    if uploaded_retro is not None and not st.session_state.get("retro_warning_seen"):
-        st.session_state["retro_warning"] = True
+
 
     st.sidebar.markdown("---")
     st.sidebar.markdown("**⚙️ Grille de taux**")
