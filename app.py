@@ -1277,11 +1277,58 @@ elif st.session_state.page == "retrocession":
                 st.warning("Aucune prestation sur la période sélectionnée.")
                 st.stop()
 
+            # Colonne patient (col 8, index 8)
+            c_pat = df_r.columns[8]
+
+            # --- DÉTECTION PAIRES 7311/7354 (séances à domicile) ---
+            # Une paire domicile = même jour + même patient + présence de 7311 ET 7354
+            df_7354 = df_f[df_f[c_code] == "7354"][[c_date, c_pat]].copy()
+            df_7311 = df_f[df_f[c_code].isin(["7311", "7301"])][[c_date, c_pat, c_code, c_mont]].copy()
+
+            # Jointure sur date + patient pour identifier les 7311 accompagnés d'un 7354
+            paires = pd.merge(
+                df_7311,
+                df_7354.drop_duplicates().assign(_domicile=True),
+                on=[c_date, c_pat], how="left"
+            )
+            paires["_domicile"] = paires["_domicile"].fillna(False)
+
+            nb_domicile_7311 = paires[paires["_domicile"] & paires[c_code].isin(["7311"])].shape[0]
+            nb_domicile_7301 = paires[paires["_domicile"] & paires[c_code].isin(["7301"])].shape[0]
+
+            ca_domicile_7311 = paires.loc[paires["_domicile"] & (paires[c_code] == "7311"), c_mont].sum()
+            ca_domicile_7301 = paires.loc[paires["_domicile"] & (paires[c_code] == "7301"), c_mont].sum()
+            ca_cabinet_7311  = paires.loc[~paires["_domicile"] & (paires[c_code] == "7311"), c_mont].sum()
+            ca_cabinet_7301  = paires.loc[~paires["_domicile"] & (paires[c_code] == "7301"), c_mont].sum()
+            nb_cabinet_7311  = paires[~paires["_domicile"] & (paires[c_code] == "7311")].shape[0]
+            nb_cabinet_7301  = paires[~paires["_domicile"] & (paires[c_code] == "7301")].shape[0]
+
+            if nb_domicile_7311 + nb_domicile_7301 > 0:
+                st.info(f"🏠 **{nb_domicile_7311 + nb_domicile_7301} séances à domicile détectées** "
+                        f"(7311 accompagnées d'un 7354) — séparées dans la grille ci-dessous.")
+
             # --- AGRÉGAT PAR CODE ---
             agg = df_f.groupby(c_code).agg(
                 CA=(c_mont, "sum"),
                 Nb_lignes=(c_mont, "count")
             ).reset_index().rename(columns={c_code: "Code"})
+
+            # Remplacer les lignes 7311 et 7301 par des versions split cabinet/domicile
+            rows_extra = []
+            for code_base, ca_cab, nb_cab, ca_dom, nb_dom in [
+                ("7311", ca_cabinet_7311, nb_cabinet_7311, ca_domicile_7311, nb_domicile_7311),
+                ("7301", ca_cabinet_7301, nb_cabinet_7301, ca_domicile_7301, nb_domicile_7301),
+            ]:
+                if code_base in agg["Code"].values:
+                    agg = agg[agg["Code"] != code_base]  # retirer la ligne globale
+                    if nb_cab > 0:
+                        rows_extra.append({"Code": f"{code_base} (cabinet)", "CA": round(ca_cab, 2), "Nb_lignes": nb_cab})
+                    if nb_dom > 0:
+                        rows_extra.append({"Code": f"{code_base} (domicile)", "CA": round(ca_dom, 2), "Nb_lignes": nb_dom})
+
+            if rows_extra:
+                agg = pd.concat([agg, pd.DataFrame(rows_extra)], ignore_index=True)
+
             agg = agg.sort_values("CA", ascending=False).reset_index(drop=True)
 
             # --- CHARGEMENT GRILLE DE TAUX SAUVEGARDÉE ---
@@ -1413,8 +1460,14 @@ elif st.session_state.page == "retrocession":
                     file_name=f"retrocession_{label_periode.replace(' ', '_').replace('–','_')}.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     use_container_width=True,
-                    type="primary"
+                    type="primary",
+                    on_click=lambda: st.session_state.update({"retro_warning": True})
                 )
+                if st.session_state.get("retro_warning"):
+                    st.warning("⚠️ Soyez attentif au fait que des factures rejetées sur cette période peuvent encore être non-traitées et ne figurent donc pas dans ce décompte.")
+                    if st.button("OK, j'en suis conscient", key="retro_warning_ok"):
+                        st.session_state["retro_warning"] = False
+                        st.rerun()
 
         except Exception as e:
             st.error(f"❌ Erreur : {e}")
