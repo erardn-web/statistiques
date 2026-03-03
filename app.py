@@ -1201,6 +1201,13 @@ elif st.session_state.page == "retrocession":
     st.title("🤝 Calcul de Rétrocession")
     st.caption("Calculez la rétrocession due par un·e thérapeute indépendant·e à partir de son export Ephysio.")
 
+    if st.session_state.get("retro_warning"):
+        st.warning("⚠️ Soyez attentif au fait que des factures rejetées sur cette période peuvent encore être non-traitées et ne figurent donc pas dans ce décompte.")
+        if st.button("OK, j'en suis conscient", key="retro_warning_ok"):
+            st.session_state["retro_warning"] = False
+            st.session_state["retro_warning_seen"] = True
+            st.rerun()
+
     # --- SIDEBAR : FICHIERS ---
     st.sidebar.markdown("---")
     st.sidebar.markdown("**📂 Fichiers**")
@@ -1208,6 +1215,8 @@ elif st.session_state.page == "retrocession":
         "Export Prestations du/de la thérapeute (.xlsx)",
         type="xlsx", key="retro_up"
     )
+    if uploaded_retro is not None and not st.session_state.get("retro_warning_seen"):
+        st.session_state["retro_warning"] = True
 
     st.sidebar.markdown("---")
     st.sidebar.markdown("**⚙️ Grille de taux**")
@@ -1304,8 +1313,7 @@ elif st.session_state.page == "retrocession":
             nb_cabinet_7301  = paires[~paires["_domicile"] & (paires[c_code] == "7301")].shape[0]
 
             if nb_domicile_7311 + nb_domicile_7301 > 0:
-                st.info(f"🏠 **{nb_domicile_7311 + nb_domicile_7301} séances à domicile détectées** "
-                        f"(7311 accompagnées d'un 7354) — séparées dans la grille ci-dessous.")
+                st.info(f"🏠 **{nb_domicile_7311 + nb_domicile_7301} séances à domicile détectées** — séparées dans la grille ci-dessous.")
 
             # --- AGRÉGAT PAR CODE ---
             agg = df_f.groupby(c_code).agg(
@@ -1460,14 +1468,8 @@ elif st.session_state.page == "retrocession":
                     file_name=f"retrocession_{label_periode.replace(' ', '_').replace('–','_')}.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     use_container_width=True,
-                    type="primary",
-                    on_click=lambda: st.session_state.update({"retro_warning": True})
+                    type="primary"
                 )
-                if st.session_state.get("retro_warning"):
-                    st.warning("⚠️ Soyez attentif au fait que des factures rejetées sur cette période peuvent encore être non-traitées et ne figurent donc pas dans ce décompte.")
-                    if st.button("OK, j'en suis conscient", key="retro_warning_ok"):
-                        st.session_state["retro_warning"] = False
-                        st.rerun()
 
         except Exception as e:
             st.error(f"❌ Erreur : {e}")
