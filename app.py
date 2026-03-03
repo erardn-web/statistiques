@@ -546,10 +546,16 @@ if st.session_state.page == "accueil":
         st.caption("📌 Revenus par code tarifaire et bilan annuel par fournisseur.")
 
         st.write("")
-        if st.button("👥 Stats Patients", use_container_width=True):
-            st.session_state.page = "stats_patients"
-            st.rerun()
-        st.caption("📌 Flux de nouveaux patients et simulation de capacité.")
+        c3, c4 = st.columns(2)
+        with c3:
+            if st.button("👥 Stats Patients", use_container_width=True):
+                st.session_state.page = "stats_patients"
+                st.rerun()
+        with c4:
+            if st.button("🤝 Rétrocession", use_container_width=True):
+                st.session_state.page = "retrocession"
+                st.rerun()
+        st.caption("📌 Stats patients & simulation de capacité. Rétrocession thérapeute indépendant·e.")
 
     st.markdown("---")
     st.info("💡 **Conseil :** Utilisez l'export Excel complet pour garantir la précision des calculs.")
@@ -1182,3 +1188,235 @@ elif st.session_state.page == "stats_patients":
     render_stats_patients()
 
 # ==========================================
+# ==========================================
+# 🤝 MODULE RÉTROCESSION
+# ==========================================
+elif st.session_state.page == "retrocession":
+    import io as _io_retro
+
+    if st.sidebar.button("⬅️ Retour Accueil"):
+        st.session_state.page = "accueil"
+        st.rerun()
+
+    st.title("🤝 Calcul de Rétrocession")
+    st.caption("Calculez la rétrocession due par un·e thérapeute indépendant·e à partir de son export Ephysio.")
+
+    # --- SIDEBAR : FICHIERS ---
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("**📂 Fichiers**")
+    uploaded_retro = st.sidebar.file_uploader(
+        "Export Prestations du/de la thérapeute (.xlsx)",
+        type="xlsx", key="retro_up"
+    )
+
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("**⚙️ Grille de taux**")
+    taux_file = st.sidebar.file_uploader(
+        "Charger une grille de taux (.xlsx)",
+        type="xlsx", key="retro_taux_up",
+        help="Rechargez une grille sauvegardée pour pré-remplir les pourcentages."
+    )
+
+    # --- SIDEBAR : PÉRIODE ---
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("**📅 Période**")
+    periode_mode = st.sidebar.radio(
+        "Filtrer par :",
+        ["Tout l'export", "Trimestre", "Période personnalisée"],
+        key="retro_periode_mode"
+    )
+
+    if uploaded_retro:
+        try:
+            @st.cache_data
+            def lire_retro(f):
+                df = pd.read_excel(f, sheet_name=None)
+                # Chercher onglet Prestation (insensible casse)
+                for k in df:
+                    if k.strip().lower() == "prestation":
+                        return df[k]
+                return list(df.values())[0]
+
+            df_r = lire_retro(uploaded_retro)
+            df_r.columns = [str(c).strip() for c in df_r.columns]
+
+            # Colonnes standard export Ephysio Prestations
+            c_date  = df_r.columns[1]
+            c_code  = df_r.columns[2]
+            c_mont  = df_r.columns[11]
+
+            df_r[c_date] = pd.to_datetime(df_r[c_date], errors="coerce")
+            df_r[c_mont] = pd.to_numeric(df_r[c_mont], errors="coerce").fillna(0)
+            df_r[c_code] = df_r[c_code].astype(str).str.strip()
+
+            # Garder uniquement les lignes avec montant positif
+            df_r = df_r[(df_r[c_mont] > 0) & df_r[c_date].notna()].copy()
+
+            date_min = df_r[c_date].min()
+            date_max = df_r[c_date].max()
+
+            # --- FILTRE PÉRIODE ---
+            if periode_mode == "Trimestre":
+                annees = sorted(df_r[c_date].dt.year.unique(), reverse=True)
+                sel_annee = st.sidebar.selectbox("Année", annees, key="retro_annee")
+                sel_trim = st.sidebar.selectbox("Trimestre", ["T1 (jan-mar)", "T2 (avr-jun)", "T3 (jul-sep)", "T4 (oct-déc)"], key="retro_trim")
+                trim_map = {"T1 (jan-mar)": (1,3), "T2 (avr-jun)": (4,6), "T3 (jul-sep)": (7,9), "T4 (oct-déc)": (10,12)}
+                m1, m2 = trim_map[sel_trim]
+                df_f = df_r[(df_r[c_date].dt.year == sel_annee) & (df_r[c_date].dt.month.between(m1, m2))]
+                label_periode = f"{sel_trim} {sel_annee}"
+            elif periode_mode == "Période personnalisée":
+                d1 = st.sidebar.date_input("Du", value=date_min.date(), key="retro_d1")
+                d2 = st.sidebar.date_input("Au", value=date_max.date(), key="retro_d2")
+                df_f = df_r[(df_r[c_date].dt.date >= d1) & (df_r[c_date].dt.date <= d2)]
+                label_periode = f"{d1.strftime('%d.%m.%Y')} – {d2.strftime('%d.%m.%Y')}"
+            else:
+                df_f = df_r.copy()
+                label_periode = f"{date_min.strftime('%d.%m.%Y')} – {date_max.strftime('%d.%m.%Y')}"
+
+            if df_f.empty:
+                st.warning("Aucune prestation sur la période sélectionnée.")
+                st.stop()
+
+            # --- AGRÉGAT PAR CODE ---
+            agg = df_f.groupby(c_code).agg(
+                CA=(c_mont, "sum"),
+                Nb_lignes=(c_mont, "count")
+            ).reset_index().rename(columns={c_code: "Code"})
+            agg = agg.sort_values("CA", ascending=False).reset_index(drop=True)
+
+            # --- CHARGEMENT GRILLE DE TAUX SAUVEGARDÉE ---
+            taux_precharges = {}
+            if taux_file is not None:
+                try:
+                    df_taux = pd.read_excel(taux_file, dtype=str)
+                    if "Code" in df_taux.columns and "Taux (%)" in df_taux.columns:
+                        for _, row in df_taux.iterrows():
+                            code = str(row["Code"]).strip()
+                            try:
+                                taux_precharges[code] = float(str(row["Taux (%)"]).replace(",", "."))
+                            except:
+                                taux_precharges[code] = 0.0
+                        st.sidebar.success(f"✅ {len(taux_precharges)} taux chargés")
+                except Exception as e:
+                    st.sidebar.error(f"Erreur grille : {e}")
+
+            # --- INTERFACE PRINCIPALE ---
+            st.subheader(f"📋 Grille de rétrocession — {label_periode}")
+            st.caption(f"**{len(agg)} codes tarifaires** trouvés | CA total : **{df_f[c_mont].sum():,.2f} CHF**")
+            st.markdown("Saisissez le taux de rétrocession pour chaque code. Mettez **0%** pour ne pas prélever sur une position.")
+            st.markdown("---")
+
+            # Construire le dataframe éditable
+            agg["Taux (%)"] = agg["Code"].map(taux_precharges).fillna(0.0)
+            agg["CA (CHF)"] = agg["CA"].round(2)
+            agg["Nb prestations"] = agg["Nb_lignes"]
+
+            df_edit = agg[["Code", "Nb prestations", "CA (CHF)", "Taux (%)"]].copy()
+
+            edited = st.data_editor(
+                df_edit,
+                column_config={
+                    "Code": st.column_config.TextColumn("Code tarifaire", disabled=True),
+                    "Nb prestations": st.column_config.NumberColumn("Nb prestations", disabled=True, format="%d"),
+                    "CA (CHF)": st.column_config.NumberColumn("CA (CHF)", disabled=True, format="%.2f"),
+                    "Taux (%)": st.column_config.NumberColumn(
+                        "Rétrocession (%)",
+                        min_value=0.0, max_value=100.0, step=0.5, format="%.1f",
+                        help="Entrez le % de rétrocession pour ce code. 0 = aucune retenue."
+                    ),
+                },
+                use_container_width=True,
+                hide_index=True,
+                key="retro_grid"
+            )
+
+            # --- SAUVEGARDE GRILLE ---
+            buf_taux = _io_retro.BytesIO()
+            edited[["Code", "Taux (%)"]].to_excel(buf_taux, index=False, engine='openpyxl')
+            buf_taux.seek(0)
+            st.sidebar.download_button(
+                label="💾 Sauvegarder la grille de taux",
+                data=buf_taux,
+                file_name="grille_retrocession.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True
+            )
+
+            # --- CALCUL ---
+            st.markdown("---")
+            if st.button("🧮 Calculer la rétrocession", type="primary", use_container_width=True):
+
+                edited["Rétrocession (CHF)"] = (edited["CA (CHF)"] * edited["Taux (%)"] / 100).round(2)
+                detail = edited[edited["Taux (%)"] > 0].copy()
+                total_retro = detail["Rétrocession (CHF)"].sum()
+                total_ca    = edited["CA (CHF)"].sum()
+                ca_couvert  = detail["CA (CHF)"].sum()
+
+                st.subheader("📊 Résultat")
+
+                col1, col2, col3 = st.columns(3)
+                col1.metric("CA total période", f"{total_ca:,.2f} CHF")
+                col2.metric("CA soumis à rétrocession", f"{ca_couvert:,.2f} CHF")
+                col3.metric("💰 Rétrocession due", f"{total_retro:,.2f} CHF",
+                    delta=f"{(total_retro/total_ca*100):.1f}% du CA total" if total_ca > 0 else None)
+
+                st.markdown("#### Détail par code")
+                st.dataframe(
+                    detail[["Code", "Nb prestations", "CA (CHF)", "Taux (%)", "Rétrocession (CHF)"]].sort_values("Rétrocession (CHF)", ascending=False),
+                    use_container_width=True,
+                    hide_index=True
+                )
+
+                # Codes à 0% pour info
+                codes_exclus = edited[edited["Taux (%)"] == 0]["Code"].tolist()
+                if codes_exclus:
+                    st.caption(f"Codes sans rétrocession (0%) : {', '.join(codes_exclus)}")
+
+                # --- EXPORT DÉCOMPTE EXCEL ---
+                buf_out = _io_retro.BytesIO()
+                with pd.ExcelWriter(buf_out, engine='openpyxl') as writer:
+                    # Onglet décompte
+                    rows_decompte = []
+                    rows_decompte.append({"": "DÉCOMPTE DE RÉTROCESSION", " ": ""})
+                    rows_decompte.append({"": "Période", " ": label_periode})
+                    rows_decompte.append({"": "Date de calcul", " ": datetime.today().strftime("%d.%m.%Y")})
+                    rows_decompte.append({"": "", " ": ""})
+                    pd.DataFrame(rows_decompte).to_excel(writer, sheet_name="Décompte", index=False)
+
+                    ws = writer.sheets["Décompte"]
+                    # En-tête tableau
+                    headers = ["Code tarifaire", "Nb prestations", "CA (CHF)", "Taux (%)", "Rétrocession (CHF)"]
+                    for col_idx, h in enumerate(headers, 1):
+                        ws.cell(row=6, column=col_idx).value = h
+
+                    for row_idx, (_, row) in enumerate(detail.iterrows(), 7):
+                        ws.cell(row=row_idx, column=1).value = row["Code"]
+                        ws.cell(row=row_idx, column=2).value = int(row["Nb prestations"])
+                        ws.cell(row=row_idx, column=3).value = float(row["CA (CHF)"])
+                        ws.cell(row=row_idx, column=4).value = float(row["Taux (%)"])
+                        ws.cell(row=row_idx, column=5).value = float(row["Rétrocession (CHF)"])
+
+                    total_row = 7 + len(detail)
+                    ws.cell(row=total_row, column=1).value = "TOTAL"
+                    ws.cell(row=total_row, column=3).value = float(round(ca_couvert, 2))
+                    ws.cell(row=total_row, column=5).value = float(round(total_retro, 2))
+
+                    # Onglet données brutes
+                    df_f[[c_date, c_code, c_mont]].rename(columns={
+                        c_date: "Date", c_code: "Code tarifaire", c_mont: "Montant (CHF)"
+                    }).to_excel(writer, sheet_name="Données brutes", index=False)
+
+                buf_out.seek(0)
+                st.download_button(
+                    label="📥 Télécharger le décompte (.xlsx)",
+                    data=buf_out,
+                    file_name=f"retrocession_{label_periode.replace(' ', '_').replace('–','_')}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True,
+                    type="primary"
+                )
+
+        except Exception as e:
+            st.error(f"❌ Erreur : {e}")
+    else:
+        st.info("👈 Chargez l'export Prestations du/de la thérapeute dans la sidebar pour commencer.")
