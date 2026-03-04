@@ -682,15 +682,23 @@ elif st.session_state.page == "factures":
                                 mean='mean', median='median', std='std', count='count'
                             ).reset_index()
                             stats.columns = ["Assureur", "Moyenne (j)", "Médiane (j)", "Écart-type (j)", "Nb factures"]
-                            # Écart-type non significatif sous 5 factures → afficher NaN
-                            stats.loc[stats["Nb factures"] < 5, "Écart-type (j)"] = None
+                            # Écart-type non significatif sous 5 factures → préfixer NS
+                            stats["Écart-type (j)"] = stats.apply(
+                                lambda r: f"NS {r['Écart-type (j)']:.1f}" if r["Nb factures"] < 5 and pd.notna(r["Écart-type (j)"]) else r["Écart-type (j)"],
+                                axis=1
+                            )
                             cols_to_show = ["Assureur", "Nb factures", "Moyenne (j)"]
                             if show_med: cols_to_show.append("Médiane (j)")
                             if show_std: cols_to_show.append("Écart-type (j)")
+                            df_styled = stats[cols_to_show].sort_values("Moyenne (j)", ascending=False)
+                            def colorier_ns(val):
+                                if isinstance(val, str) and val.startswith("NS"):
+                                    return "color: red; font-weight: bold"
+                                return ""
                             st.dataframe(
-                                stats[cols_to_show].sort_values("Moyenne (j)", ascending=False),
+                                df_styled.style.applymap(colorier_ns, subset=["Écart-type (j)"]) if show_std else df_styled,
                                 use_container_width=True,
-                                column_config={"Écart-type (j)": st.column_config.NumberColumn(format="%.1f", help="Affiché uniquement si ≥ 5 factures")}
+                                column_config={"Écart-type (j)": st.column_config.TextColumn(help="NS = Non-significatif (< 5 factures)")}
                             )
                     with tab3:
                         st.subheader(f"Analyse des retards > 30j ({p_name})")
