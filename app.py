@@ -11,6 +11,62 @@ st.set_page_config(page_title="Analyseur de Facturation Pro", layout="wide", pag
 MOTS_EXCLUSION = {"BERNOIS", "NEUCHATELOIS", "VALAISANS", "GENEVOIS", "VAUDOIS", "FRIBOURGEOIS"}
 COULEURS_PROF = {"Physiothérapie": "#00CCFF", "Ergothérapie": "#FF9900", "Massage": "#00CC96", "Autre": "#AB63FA"}
 
+# --- UTILITAIRE PDF ---
+def generer_pdf_tableau(titre, df, sous_titre=""):
+    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.lib import colors
+    from reportlab.lib.units import cm
+    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.enums import TA_CENTER
+    import io as _io_pdf
+
+    buf = _io_pdf.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=landscape(A4),
+                            leftMargin=1.5*cm, rightMargin=1.5*cm,
+                            topMargin=1.5*cm, bottomMargin=1.5*cm)
+    styles = getSampleStyleSheet()
+    titre_style = ParagraphStyle('titre', fontSize=14, fontName='Helvetica-Bold',
+                                 spaceAfter=6, alignment=TA_CENTER)
+    sous_style  = ParagraphStyle('sous',  fontSize=9,  fontName='Helvetica',
+                                 spaceAfter=12, textColor=colors.grey, alignment=TA_CENTER)
+    elems = [Paragraph(titre, titre_style)]
+    if sous_titre:
+        elems.append(Paragraph(sous_titre, sous_style))
+    elems.append(Spacer(1, 0.3*cm))
+
+    # Construire les données du tableau
+    cols = list(df.columns)
+    data = [cols] + [[str(v) if v is not None and str(v) != 'nan' else '—'
+                      for v in row] for row in df.values]
+
+    # Largeur colonnes auto
+    page_w = landscape(A4)[0] - 3*cm
+    col_w = page_w / len(cols)
+    col_widths = [col_w] * len(cols)
+
+    t = Table(data, colWidths=col_widths, repeatRows=1)
+    t.setStyle(TableStyle([
+        ('BACKGROUND',   (0,0), (-1,0),  colors.HexColor('#1A6B9A')),
+        ('TEXTCOLOR',    (0,0), (-1,0),  colors.white),
+        ('FONTNAME',     (0,0), (-1,0),  'Helvetica-Bold'),
+        ('FONTSIZE',     (0,0), (-1,0),  9),
+        ('ALIGN',        (0,0), (-1,-1), 'CENTER'),
+        ('VALIGN',       (0,0), (-1,-1), 'MIDDLE'),
+        ('FONTNAME',     (0,1), (-1,-1), 'Helvetica'),
+        ('FONTSIZE',     (0,1), (-1,-1), 8),
+        ('ROWBACKGROUNDS', (0,1), (-1,-1), [colors.white, colors.HexColor('#EEF4F9')]),
+        ('GRID',         (0,0), (-1,-1), 0.4, colors.HexColor('#CCCCCC')),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 5),
+        ('TOPPADDING',    (0,0), (-1,-1), 5),
+    ]))
+    elems.append(t)
+    elems.append(Spacer(1, 0.5*cm))
+    elems.append(Paragraph(f"Généré le {datetime.today().strftime('%d.%m.%Y')}", sous_style))
+    doc.build(elems)
+    buf.seek(0)
+    return buf
+
 def jours_ouvres(date_debut, date_fin, jours_cabinet=None):
     """Nombre de jours où le cabinet était réellement ouvert entre deux dates.
     Si jours_cabinet (set de date) est fourni, on compte les jours avec prestations.
@@ -700,6 +756,8 @@ elif st.session_state.page == "factures":
                                 use_container_width=True,
                                 column_config={"Écart-type (j)": st.column_config.TextColumn(help="NS = Non-significatif (< 5 factures)")}
                             )
+                            _pdf_buf = generer_pdf_tableau(f"Délais par assureur — {p_name}", df_styled, f"Période : {p_name}")
+                            st.download_button("📄 Télécharger en PDF", _pdf_buf, file_name=f"delais_{p_name}.pdf", mime="application/pdf", key=f"pdf_delais_{p_name}", use_container_width=True)
                     with tab3:
                         st.subheader(f"Analyse des retards > 30j ({p_name})")
                         df_att_30 = f_att[f_att["delai_actuel"] > 30].copy()
@@ -712,6 +770,8 @@ elif st.session_state.page == "factures":
                         merged["% Retard"] = (merged["Nb Retards"] / merged["Volume Total"] * 100).round(1)
                         st.metric(f"Total Retards ({p_name})", f"{int(merged['Nb Retards'].sum())} factures")
                         st.dataframe(merged[["assureur", "Nb Retards", "Volume Total", "% Retard"]].sort_values("% Retard", ascending=False), use_container_width=True)
+                        _pdf_buf = generer_pdf_tableau(f"Retards > 30j — {p_name}", merged[["assureur", "Nb Retards", "Volume Total", "% Retard"]].sort_values("% Retard", ascending=False), f"Période : {p_name}")
+                        st.download_button("📄 Télécharger en PDF", _pdf_buf, file_name=f"retards_{p_name}.pdf", mime="application/pdf", key=f"pdf_retards_{p_name}", use_container_width=True)
                 
                 with tab4:
                     st.subheader("📈 Évolution du délai de remboursement")
@@ -930,6 +990,9 @@ elif st.session_state.page == "medecins":
                     st.altair_chart(chart, use_container_width=True)
                     cols_affichage = ["medecin", "Tendance", "CA Global", label_ref, label_taux_ref, "CA 90j", "Taux 90j (CHF/j)"]
                     st.dataframe(tab_final[tab_final["medecin"].isin(choix)].sort_values("CA Global", ascending=False)[cols_affichage], use_container_width=True, hide_index=True)
+                    _df_pdf_med = tab_final[tab_final["medecin"].isin(choix)].sort_values("CA Global", ascending=False)[cols_affichage]
+                    _pdf_buf = generer_pdf_tableau("Performance Médecins", _df_pdf_med, f"Calculé au {datetime.today().strftime('%d.%m.%Y')}")
+                    st.download_button("📄 Télécharger en PDF", _pdf_buf, file_name="medecins.pdf", mime="application/pdf", key="pdf_medecins", use_container_width=True)
         except Exception as e: st.error(f"Erreur technique : {e}")
 
 # ==========================================
@@ -1121,6 +1184,13 @@ elif st.session_state.page == "tarifs":
                     f"{tooltip_note}"
                 )
                 st.markdown(html_table, unsafe_allow_html=True)
+                # PDF du tableau tarifs
+                _cols_pdf_t = [first_col_header, "Tendance", f"CA Global (CHF)", label_ref, label_taux_ref, "CA 90j (CHF)", "Taux 90j (CHF/j)"]
+                if not tab_final_t.empty:
+                    _df_pdf_t = tab_final_t[tab_final_t[target_col].isin(sel_items)].copy()
+                    _df_pdf_t.columns = [str(c) for c in _df_pdf_t.columns]
+                    _pdf_buf = generer_pdf_tableau(f"Performance Tarifs — {view_mode}", _df_pdf_t, f"Calculé au {reference_date.strftime('%d.%m.%Y')}")
+                    st.download_button("📄 Télécharger en PDF", _pdf_buf, file_name="tarifs.pdf", mime="application/pdf", key="pdf_tarifs", use_container_width=True)
             else:
                 st.warning("Aucune donnée disponible pour cette sélection.")
                 
@@ -1192,6 +1262,8 @@ elif st.session_state.page == "bilan":
                         col_ca_f: st.column_config.NumberColumn("Total CA", format="%.2f CHF")
                     }
                 )
+                _pdf_buf = generer_pdf_tableau(f"Bilan CA {annee}", ca_fourn.rename(columns={col_fourn_f: "Fournisseur", col_ca_f: "Total CA (CHF)"}), f"Exercice {annee}")
+                st.download_button("📄 Télécharger en PDF", _pdf_buf, file_name=f"bilan_ca_{annee}.pdf", mime="application/pdf", key="pdf_bilan_ca", use_container_width=True)
             else:
                 df_sel['Mois_Num'] = df_sel[col_date_f].dt.month
                 nom_mois = ["Jan", "Fév", "Mar", "Avr", "Mai", "Jun", "Jul", "Août", "Sep", "Oct", "Nov", "Déc"]
@@ -1230,6 +1302,8 @@ elif st.session_state.page == "bilan":
                         hide_index=True,
                         column_config={col_fourn_f: "Fournisseur", col_ca_f: st.column_config.NumberColumn("Montant dû", format="%.2f CHF")}
                     )
+                    _pdf_buf = generer_pdf_tableau(f"Impayés au 31.12.{annee}", imp_par_fourn.rename(columns={col_fourn_f: "Fournisseur", col_ca_f: "Montant dû (CHF)"}), f"Exercice {annee}")
+                    st.download_button("📄 Télécharger en PDF", _pdf_buf, file_name=f"impayes_{annee}.pdf", mime="application/pdf", key="pdf_impayes", use_container_width=True)
             else:
                 st.success(f"Toutes les factures de l'année {annee} sont marquées comme payées.")
 
@@ -1474,6 +1548,9 @@ elif st.session_state.page == "retrocession":
                     use_container_width=True,
                     hide_index=True
                 )
+                _df_retro_pdf = detail[["Code", "Nb prestations", "CA (CHF)", "Taux (%)", "Rétrocession (CHF)"]].sort_values("Rétrocession (CHF)", ascending=False)
+                _pdf_buf = generer_pdf_tableau(f"Décompte Rétrocession — {label_periode}", _df_retro_pdf, f"Total dû : {total_retro:,.2f} CHF")
+                st.download_button("📄 Télécharger en PDF", _pdf_buf, file_name=f"retrocession_{label_periode.replace(' ','_')}.pdf", mime="application/pdf", key="pdf_retro", use_container_width=True)
 
                 # Codes à 0% pour info
                 codes_exclus = edited[edited["Taux (%)"] == 0]["Code"].tolist()
