@@ -157,7 +157,7 @@ def generer_pdf_plotly(titre, fig, sous_titre=""):
     return buf
 
 def bouton_imprimer_page(key="print_btn"):
-    """Injecte un bouton qui déclenche window.print() pour imprimer/exporter la page en PDF."""
+    """Injecte un bouton qui déclenche window.print() via postMessage au parent."""
     st.components.v1.html(f"""
         <style>
             .print-btn {{
@@ -177,16 +177,30 @@ def bouton_imprimer_page(key="print_btn"):
                 margin-top: 4px;
             }}
             .print-btn:hover {{ background-color: #155a82; }}
-            @media print {{
-                /* Masquer sidebar et boutons à l'impression */
-                section[data-testid="stSidebar"] {{ display: none !important; }}
-                .stDownloadButton, .stButton {{ display: none !important; }}
-                iframe {{ display: none !important; }}
-            }}
         </style>
-        <button class="print-btn" onclick="window.parent.print()">
+        <button class="print-btn" onclick="triggerPrint()">
             🖨️ Exporter la page en PDF
         </button>
+        <script>
+            function triggerPrint() {{
+                // Inject print CSS and trigger print in the top-level window
+                var style = document.createElement('style');
+                style.id = 'streamlit-print-style';
+                style.innerHTML = `
+                    @media print {{
+                        section[data-testid="stSidebar"] {{ display: none !important; }}
+                        [data-testid="stToolbar"] {{ display: none !important; }}
+                        .stDownloadButton {{ display: none !important; }}
+                        iframe[title="streamlit_components"] {{ display: none !important; }}
+                        .block-container {{ padding: 0 !important; }}
+                    }}
+                `;
+                var existing = window.top.document.getElementById('streamlit-print-style');
+                if (existing) existing.remove();
+                window.top.document.head.appendChild(style);
+                window.top.print();
+            }}
+        </script>
     """, height=48)
 
 def jours_ouvres(date_debut, date_fin, jours_cabinet=None):
@@ -916,7 +930,7 @@ elif st.session_state.page == "factures":
                         h_tmp = df[(df["date_paiement"].notna()) & (df["date_facture"] >= lim)].copy()
                         h_tmp["delai"] = (h_tmp["date_paiement"] - h_tmp["date_facture"]).dt.days
                         if not h_tmp.empty:
-                            m = h_tmp.groupby("assureur")["delai"].mean().reset_index()
+                            m = h_tmp.groupby("assureur")["delai"].mean().round(2).reset_index()
                             m["Période"] = n
                             evol_data.append(m)
 
@@ -1131,8 +1145,11 @@ elif st.session_state.page == "medecins":
                     except Exception as _e:
                         st.caption(f"Export PDF indisponible : {_e}")
                     cols_affichage = ["medecin", "Tendance", "CA Global", label_ref, label_taux_ref, "CA 90j", "Taux 90j (CHF/j)"]
-                    st.dataframe(tab_final[tab_final["medecin"].isin(choix)].sort_values("CA Global", ascending=False)[cols_affichage], use_container_width=True, hide_index=True)
+                    _df_disp_med = tab_final[tab_final["medecin"].isin(choix)].sort_values("CA Global", ascending=False)[cols_affichage].copy()
+                    _df_disp_med = _df_disp_med.apply(lambda c: c.round(2) if c.dtype.kind == 'f' else c)
+                    st.dataframe(_df_disp_med, use_container_width=True, hide_index=True)
                     _df_pdf_med = tab_final[tab_final["medecin"].isin(choix)].sort_values("CA Global", ascending=False)[cols_affichage]
+                    _df_pdf_med = _df_pdf_med.apply(lambda c: c.round(2) if c.dtype.kind == 'f' else c)
                     _pdf_buf = generer_pdf_tableau("Performance Médecins", _df_pdf_med, f"Calculé au {datetime.today().strftime('%d.%m.%Y')}")
                     st.download_button("📄 Télécharger en PDF", _pdf_buf, file_name="medecins.pdf", mime="application/pdf", key="pdf_medecins", use_container_width=True)
         except Exception as e: st.error(f"Erreur technique : {e}")
@@ -1284,6 +1301,7 @@ elif st.session_state.page == "tarifs":
                     tab_perf = tab_perf.merge(noms_prestation, on=nom_col_code, how="left")
 
                 tab_sorted = tab_perf.sort_values("CA Global", ascending=False)
+                tab_sorted = tab_sorted.apply(lambda c: c.round(2) if c.dtype.kind == 'f' else c)
 
                 def tendance_html(t):
                     if "Hausse" in t:    color = "#1a7f3c"
@@ -1401,7 +1419,7 @@ elif st.session_state.page == "bilan":
             vue_ca = st.radio("Affichage CA par Fournisseur :", ["Annuel (Cumulé)", "Mensuel (Détail)"], horizontal=True)
 
             if vue_ca == "Annuel (Cumulé)":
-                ca_fourn = df_sel.groupby(col_fourn_f)[col_ca_f].sum().sort_values(ascending=False).reset_index()
+                ca_fourn = df_sel.groupby(col_fourn_f)[col_ca_f].sum().round(2).sort_values(ascending=False).reset_index()
                 
                 # Ajout de la ligne Total pour le cumul annuel
                 total_val = ca_fourn[col_ca_f].sum()
@@ -1426,7 +1444,8 @@ elif st.session_state.page == "bilan":
                 pivot_fourn = df_sel.pivot_table(index=col_fourn_f, columns='Mois_Num', values=col_ca_f, aggfunc='sum', fill_value=0)
                 pivot_fourn = pivot_fourn.reindex(columns=range(1, 13), fill_value=0)
                 pivot_fourn.columns = nom_mois
-                pivot_fourn['TOTAL'] = pivot_fourn.sum(axis=1)
+                pivot_fourn = pivot_fourn.round(2)
+                pivot_fourn['TOTAL'] = pivot_fourn.sum(axis=1).round(2)
                 
                 # Ajout de la ligne de Totalisation en bas du tableau mensuel
                 pivot_total = pivot_fourn.sum(axis=0).to_frame().T
