@@ -5,3 +5,4 @@ altair
 openpyxl
 reportlab
 kaleido
+matplotlib
