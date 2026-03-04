@@ -4,3 +4,4 @@ plotly
 altair
 openpyxl
 reportlab
+kaleido
