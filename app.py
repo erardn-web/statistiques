@@ -762,7 +762,7 @@ elif st.session_state.page == "factures":
                 help="Fusionne les assureurs appartenant au même groupe (ex. Le Groupe Mutuel + Philos → Groupe Mutuel)")
             st.sidebar.header("📅 4. Périodes & Simulation")
             options_p = {"Global": None, "6 mois": 6, "4 mois": 4, "3 mois": 3, "2 mois": 2, "1 mois": 1}
-            periods_sel = st.sidebar.multiselect("Analyser les périodes :", list(options_p.keys()), default=["Global", "4 mois"])
+            periods_sel = st.sidebar.multiselect("Analyser les périodes :", list(options_p.keys()), default=["Global", "4 mois", "2 mois"])
             date_cible = st.sidebar.date_input("Date cible (simulation) :", value=datetime.today())
             col_b1, col_b2 = st.sidebar.columns(2)
             if col_b1.button("🚀 Analyser", type="primary", use_container_width=True):
