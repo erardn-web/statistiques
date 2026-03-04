@@ -12,6 +12,33 @@ MOTS_EXCLUSION = {"BERNOIS", "NEUCHATELOIS", "VALAISANS", "GENEVOIS", "VAUDOIS",
 COULEURS_PROF = {"Physiothérapie": "#00CCFF", "Ergothérapie": "#FF9900", "Massage": "#00CC96", "Autre": "#AB63FA"}
 
 # --- UTILITAIRE PDF ---
+def chf(valeur):
+    """Formate un nombre en CHF avec apostrophe suisse : 13'340.50 CHF"""
+    try:
+        entier, decimale = f"{abs(float(valeur)):.2f}".split(".")
+        entier_fmt = ""
+        for i, c in enumerate(reversed(entier)):
+            if i > 0 and i % 3 == 0:
+                entier_fmt = "'" + entier_fmt
+            entier_fmt = c + entier_fmt
+        signe = "-" if float(valeur) < 0 else ""
+        return f"{signe}{entier_fmt}.{decimale}"
+    except:
+        return str(valeur)
+
+def chf_int(valeur):
+    """Formate un entier en CHF avec apostrophe suisse : 13'340"""
+    try:
+        entier = str(int(round(float(valeur))))
+        result = ""
+        for i, c in enumerate(reversed(entier)):
+            if i > 0 and i % 3 == 0:
+                result = "'" + result
+            result = c + result
+        return result
+    except:
+        return str(valeur)
+
 def generer_pdf_tableau(titre, df, sous_titre=""):
     from reportlab.lib.pagesizes import A4, landscape
     from reportlab.lib import colors
@@ -92,7 +119,7 @@ def generer_pdf_graphique_matplotlib(titre, df, sous_titre="", kind="line", xlab
     ax.set_title(titre, fontsize=14, fontweight='bold', pad=12)
     ax.set_xlabel(xlabel, fontsize=10)
     ax.set_ylabel(ylabel, fontsize=10)
-    ax.yaxis.set_major_formatter(mticker.FuncFormatter(lambda x, _: f"{x:,.0f}"))
+    ax.yaxis.set_major_formatter(mticker.FuncFormatter(lambda x, _: f"{chf_int(x)}"))
     ax.legend(loc='upper left', fontsize=8, ncol=min(4, len(df.columns)))
     ax.grid(axis='y', linestyle='--', alpha=0.5)
     plt.xticks(rotation=30, ha='right', fontsize=8)
@@ -156,36 +183,6 @@ def generer_pdf_plotly(titre, fig, sous_titre=""):
     buf.seek(0)
     return buf
 
-def bouton_imprimer_page(key="print_btn"):
-    """Injecte le CSS d'impression et affiche un rappel Ctrl+P."""
-    st.markdown("""
-        <style>
-        @media print {
-            section[data-testid="stSidebar"] { display: none !important; }
-            [data-testid="stToolbar"] { display: none !important; }
-            [data-testid="stDecoration"] { display: none !important; }
-            .stDownloadButton { display: none !important; }
-            .stButton { display: none !important; }
-            iframe { display: none !important; }
-            .block-container { padding: 0 2rem !important; max-width: 100% !important; }
-            .stPlotlyChart, .stAltairChart { page-break-inside: avoid; }
-            .stDataFrame { page-break-inside: avoid; }
-        }
-        .print-hint {
-            display: flex; align-items: center; gap: 10px;
-            background: #f0f7ff; border: 1px solid #1A6B9A;
-            border-radius: 6px; padding: 8px 14px;
-            font-size: 13px; color: #1A6B9A; margin-bottom: 8px;
-        }
-        </style>
-        <div class="print-hint">
-            🖨️ <strong>Exporter en PDF</strong> — appuyez sur
-            <kbd style="background:#fff;border:1px solid #ccc;border-radius:3px;padding:1px 6px;font-size:12px">Ctrl+P</kbd>
-            (Windows) ou
-            <kbd style="background:#fff;border:1px solid #ccc;border-radius:3px;padding:1px 6px;font-size:12px">⌘+P</kbd>
-            (Mac), puis choisissez <em>Enregistrer en PDF</em>. Orientation <strong>Paysage</strong> recommandée.
-        </div>
-    """, unsafe_allow_html=True)
 
 def jours_ouvres(date_debut, date_fin, jours_cabinet=None):
     """Nombre de jours où le cabinet était réellement ouvert entre deux dates.
@@ -745,7 +742,6 @@ elif st.session_state.page == "factures":
         st.rerun()
 
     st.title("📊 Analyse de la Facturation")
-    bouton_imprimer_page("print_facturation")
     uploaded_file = st.sidebar.file_uploader("Charger le fichier Excel (.xlsx)", type="xlsx", key="fact_file")
 
     if uploaded_file:
@@ -824,7 +820,7 @@ elif st.session_state.page == "factures":
             ajd = pd.Timestamp(datetime.today().date())
             f_att = df[df["statut"].str.startswith("en attente") & (df["statut"] != "en attente (annulé)")].copy()
             f_att["delai_actuel"] = (ajd - f_att["date_facture"]).dt.days
-            st.metric("💰 TOTAL BRUT EN ATTENTE", f"{f_att['montant'].sum():,.2f} CHF")
+            st.metric("💰 TOTAL BRUT EN ATTENTE", f"{chf(f_att['montant'].sum())} CHF")
 
             if btn_simuler:
                 jours_delta = (pd.Timestamp(date_cible) - ajd).days
@@ -836,7 +832,7 @@ elif st.session_state.page == "factures":
                         p_hist_sim = df[(df["date_paiement"].notna()) & (df["date_facture"] >= limit)].copy()
                         p_hist_sim["delai"] = (p_hist_sim["date_paiement"] - p_hist_sim["date_facture"]).dt.days
                         liq, t = calculer_liquidites_fournisseur(f_att, p_hist_sim, [jours_delta])
-                        res_sim.append({"Période": p_nom, "Estimation (CHF)": f"{round(liq[jours_delta]):,}", "Probabilité": f"{t[jours_delta]:.1%}"})
+                        res_sim.append({"Période": p_nom, "Estimation (CHF)": f"{chf_int(round(liq[jours_delta]))}", "Probabilité": f"{t[jours_delta]:.1%}"})
                     st.table(pd.DataFrame(res_sim))
 
             if st.session_state.analyse_lancee:
@@ -851,7 +847,7 @@ elif st.session_state.page == "factures":
                         st.subheader(f"Liquidités : {p_name}")
                         horizons = [10, 20, 30]
                         liq, t = calculer_liquidites_fournisseur(f_att, p_hist, horizons)
-                        st.table(pd.DataFrame({"Horizon": [f"Sous {h}j" for h in horizons], "Estimation (CHF)": [f"{round(liq[h]):,}" for h in horizons], "Probabilité": [f"{round(t[h]*100)}%" for h in horizons]}))
+                        st.table(pd.DataFrame({"Horizon": [f"Sous {h}j" for h in horizons], "Estimation (CHF)": [f"{chf_int(round(liq[h]))}" for h in horizons], "Probabilité": [f"{round(t[h]*100)}%" for h in horizons]}))
                     with tab2:
                         st.subheader(f"Délais par assureur ({p_name})")
                         if not p_hist.empty:
@@ -970,7 +966,6 @@ elif st.session_state.page == "medecins":
         st.rerun()
 
     st.header("👨‍⚕️ Performance Médecins")
-    bouton_imprimer_page("print_medecins")
     uploaded_file = st.sidebar.file_uploader("Export Factures (.xlsx)", type="xlsx", key="med_up")
 
     # --- CONFIG MÉDECINS ---
@@ -1152,7 +1147,6 @@ elif st.session_state.page == "tarifs":
         st.rerun()
 
     st.title("📊 Analyse des revenus mensuels et Tendances")
-    bouton_imprimer_page("print_tarifs")
     uploaded_file = st.sidebar.file_uploader("📂 Déposer l'export Excel (onglet 'Prestation')", type="xlsx", key="tarif_up")
 
     if uploaded_file:
@@ -1314,11 +1308,11 @@ elif st.session_state.page == "tarifs":
                         f'<tr>'
                         f'{first_cell}'
                         f'<td>{tendance_html(r["Tendance"])}</td>'
-                        f'<td style="text-align:right">{r["CA Global"]:,.2f}</td>'
-                        f'<td style="text-align:right">{r[label_ref]:,.2f}</td>'
-                        f'<td style="text-align:right">{r[label_taux_ref]:,.2f}</td>'
-                        f'<td style="text-align:right">{r["CA 90j"]:,.2f}</td>'
-                        f'<td style="text-align:right">{r["Taux 90j (CHF/j)"]:,.2f}</td>'
+                        f'<td style="text-align:right">{chf(r["CA Global"])}</td>'
+                        f'<td style="text-align:right">{chf(r[label_ref])}</td>'
+                        f'<td style="text-align:right">{chf(r[label_taux_ref])}</td>'
+                        f'<td style="text-align:right">{chf(r["CA 90j"])}</td>'
+                        f'<td style="text-align:right">{chf(r["Taux 90j (CHF/j)"])}</td>'
                         f'</tr>'
                     )
 
@@ -1365,7 +1359,6 @@ elif st.session_state.page == "bilan":
         st.rerun()
 
     st.title("🏦 Bilan des Revenus par Fournisseur")
-    bouton_imprimer_page("print_bilan")
     up = st.sidebar.file_uploader("Fichier Excel (Export avec onglet Facture)", type="xlsx", key="bilan_up")
     
     if up:
@@ -1442,7 +1435,7 @@ elif st.session_state.page == "bilan":
                 pivot_final = pd.concat([pivot_fourn, pivot_total])
                 
                 pivot_final = pivot_final.round(2)
-                st.dataframe(pivot_final.style.format("{:.2f}").highlight_max(axis=0, color="#d4f1f9"), use_container_width=True)
+                st.dataframe(pivot_final.style.format(lambda x: chf(x) if isinstance(x, (int,float)) else str(x)).highlight_max(axis=0, color='#d4f1f9'), use_container_width=True)
 
             # --- SECTION IMPAYÉS AU 31.12 ---
             st.markdown("---")
@@ -1452,7 +1445,7 @@ elif st.session_state.page == "bilan":
             total_impayes = df_impayes[col_ca_f].sum()
 
             if total_impayes > 0:
-                st.warning(f"Montant total restant à percevoir pour {annee} : **{total_impayes:,.2f} CHF**")
+                st.warning(f"Montant total restant à percevoir pour {annee} : **{chf(total_impayes)} CHF**")
                 imp_par_fourn = df_impayes.groupby(col_fourn_f)[col_ca_f].sum().sort_values(ascending=False).reset_index()
                 
                 # Ajout de la ligne Total aussi pour les impayés
@@ -1489,7 +1482,6 @@ elif st.session_state.page == "retrocession":
         st.rerun()
 
     st.title("🤝 Calcul de Rétrocession")
-    bouton_imprimer_page("print_retrocession")
     st.caption("Calculez la rétrocession due par un·e thérapeute indépendant·e à partir de son export Ephysio.")
 
     if not st.session_state.get("retro_warning_seen"):
@@ -1649,7 +1641,7 @@ elif st.session_state.page == "retrocession":
 
             # --- INTERFACE PRINCIPALE ---
             st.subheader(f"📋 Grille de rétrocession — {label_periode}")
-            st.caption(f"**{len(agg)} codes tarifaires** trouvés | CA total : **{df_f[c_mont].sum():,.2f} CHF**")
+            st.caption(f"**{len(agg)} codes tarifaires** trouvés | CA total : **{chf(df_f[c_mont].sum())} CHF**")
             st.markdown("Saisissez le taux de rétrocession pour chaque code. Mettez **0%** pour ne pas prélever sur une position.")
             st.markdown("---")
 
@@ -1702,9 +1694,9 @@ elif st.session_state.page == "retrocession":
                 st.subheader("📊 Résultat")
 
                 col1, col2, col3 = st.columns(3)
-                col1.metric("CA total période", f"{total_ca:,.2f} CHF")
-                col2.metric("CA soumis à rétrocession", f"{ca_couvert:,.2f} CHF")
-                col3.metric("💰 Rétrocession due", f"{total_retro:,.2f} CHF",
+                col1.metric("CA total période", f"{chf(total_ca)} CHF")
+                col2.metric("CA soumis à rétrocession", f"{chf(ca_couvert)} CHF")
+                col3.metric("💰 Rétrocession due", f"{chf(total_retro)} CHF",
                     delta=f"{(total_retro/total_ca*100):.2f}% du CA total" if total_ca > 0 else None)
 
                 st.markdown("#### Détail par code")
@@ -1719,7 +1711,7 @@ elif st.session_state.page == "retrocession":
                     }
                 )
                 _df_retro_pdf = detail[["Code", "Nb prestations", "CA (CHF)", "Taux (%)", "Rétrocession (CHF)"]].sort_values("Rétrocession (CHF)", ascending=False)
-                _pdf_buf = generer_pdf_tableau(f"Décompte Rétrocession — {label_periode}", _df_retro_pdf, f"Total dû : {total_retro:,.2f} CHF")
+                _pdf_buf = generer_pdf_tableau(f"Décompte Rétrocession — {label_periode}", _df_retro_pdf, f"Total dû : {chf(total_retro)} CHF")
                 st.download_button("📄 Télécharger en PDF", _pdf_buf, file_name=f"retrocession_{label_periode.replace(' ','_')}.pdf", mime="application/pdf", key="pdf_retro", use_container_width=True)
 
                 # Codes à 0% pour info
