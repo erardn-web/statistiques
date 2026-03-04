@@ -156,6 +156,39 @@ def generer_pdf_plotly(titre, fig, sous_titre=""):
     buf.seek(0)
     return buf
 
+def bouton_imprimer_page(key="print_btn"):
+    """Injecte un bouton qui déclenche window.print() pour imprimer/exporter la page en PDF."""
+    st.components.v1.html(f"""
+        <style>
+            .print-btn {{
+                display: inline-flex;
+                align-items: center;
+                gap: 8px;
+                background-color: #1A6B9A;
+                color: white;
+                border: none;
+                border-radius: 6px;
+                padding: 8px 16px;
+                font-size: 14px;
+                font-weight: 500;
+                cursor: pointer;
+                width: 100%;
+                justify-content: center;
+                margin-top: 4px;
+            }}
+            .print-btn:hover {{ background-color: #155a82; }}
+            @media print {{
+                /* Masquer sidebar et boutons à l'impression */
+                section[data-testid="stSidebar"] {{ display: none !important; }}
+                .stDownloadButton, .stButton {{ display: none !important; }}
+                iframe {{ display: none !important; }}
+            }}
+        </style>
+        <button class="print-btn" onclick="window.parent.print()">
+            🖨️ Exporter la page en PDF
+        </button>
+    """, height=48)
+
 def jours_ouvres(date_debut, date_fin, jours_cabinet=None):
     """Nombre de jours où le cabinet était réellement ouvert entre deux dates.
     Si jours_cabinet (set de date) est fourni, on compte les jours avec prestations.
@@ -714,6 +747,7 @@ elif st.session_state.page == "factures":
         st.rerun()
 
     st.title("📊 Analyse de la Facturation")
+    bouton_imprimer_page("print_facturation")
     uploaded_file = st.sidebar.file_uploader("Charger le fichier Excel (.xlsx)", type="xlsx", key="fact_file")
 
     if uploaded_file:
@@ -934,6 +968,7 @@ elif st.session_state.page == "medecins":
         st.rerun()
 
     st.header("👨‍⚕️ Performance Médecins")
+    bouton_imprimer_page("print_medecins")
     uploaded_file = st.sidebar.file_uploader("Export Factures (.xlsx)", type="xlsx", key="med_up")
 
     # --- CONFIG MÉDECINS ---
@@ -1111,6 +1146,7 @@ elif st.session_state.page == "tarifs":
         st.rerun()
 
     st.title("📊 Analyse des revenus mensuels et Tendances")
+    bouton_imprimer_page("print_tarifs")
     uploaded_file = st.sidebar.file_uploader("📂 Déposer l'export Excel (onglet 'Prestation')", type="xlsx", key="tarif_up")
 
     if uploaded_file:
@@ -1322,6 +1358,7 @@ elif st.session_state.page == "bilan":
         st.rerun()
 
     st.title("🏦 Bilan des Revenus par Fournisseur")
+    bouton_imprimer_page("print_bilan")
     up = st.sidebar.file_uploader("Fichier Excel (Export avec onglet Facture)", type="xlsx", key="bilan_up")
     
     if up:
@@ -1443,6 +1480,7 @@ elif st.session_state.page == "retrocession":
         st.rerun()
 
     st.title("🤝 Calcul de Rétrocession")
+    bouton_imprimer_page("print_retrocession")
     st.caption("Calculez la rétrocession due par un·e thérapeute indépendant·e à partir de son export Ephysio.")
 
     if not st.session_state.get("retro_warning_seen"):
