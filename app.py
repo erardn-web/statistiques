@@ -1187,9 +1187,10 @@ elif st.session_state.page == "tarifs":
                 )
                 st.markdown(html_table, unsafe_allow_html=True)
                 # PDF du tableau tarifs
-                _cols_pdf_t = [first_col_header, "Tendance", f"CA Global (CHF)", label_ref, label_taux_ref, "CA 90j (CHF)", "Taux 90j (CHF/j)"]
-                if not tab_final_t.empty:
-                    _df_pdf_t = tab_final_t[tab_final_t[target_col].isin(sel_items)].copy()
+                if not tab_sorted.empty:
+                    _cols_pdf_t = [group_col, "Tendance", "CA Global", label_ref, label_taux_ref, "CA 90j", "Taux 90j (CHF/j)"]
+                    _cols_pdf_t = [c for c in _cols_pdf_t if c in tab_sorted.columns]
+                    _df_pdf_t = tab_sorted[_cols_pdf_t].copy()
                     _df_pdf_t.columns = [str(c) for c in _df_pdf_t.columns]
                     _pdf_buf = generer_pdf_tableau(f"Performance Tarifs — {view_mode}", _df_pdf_t, f"Calculé au {reference_date.strftime('%d.%m.%Y')}")
                     st.download_button("📄 Télécharger en PDF", _pdf_buf, file_name="tarifs.pdf", mime="application/pdf", key="pdf_tarifs", use_container_width=True)
