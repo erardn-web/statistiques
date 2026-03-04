@@ -610,6 +610,8 @@ elif st.session_state.page == "factures":
             df["montant"] = pd.to_numeric(df["montant"], errors="coerce").fillna(0)
             df["statut"] = df["statut"].astype(str).str.lower().str.strip()
             df["assureur"] = df["assureur"].fillna("Patient")
+            # LCA : remboursement direct par le patient → assureur = "Patient"
+            df.loc[df["loi"] == "LCA", "assureur"] = "Patient"
 
             # --- GROUPES D'ASSUREURS SUISSES ---
             # Mapping : nom exact dans Ephysio → nom du groupe affiché
