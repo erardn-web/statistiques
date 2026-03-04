@@ -829,7 +829,7 @@ elif st.session_state.page == "factures":
                             stats.columns = ["Assureur", "Moyenne (j)", "Médiane (j)", "Écart-type (j)", "Nb factures"]
                             # Écart-type non significatif sous 5 factures → préfixer NS
                             stats["Écart-type (j)"] = stats.apply(
-                                lambda r: f"NS {r['Écart-type (j)']:.1f}" if r["Nb factures"] < 5 and pd.notna(r["Écart-type (j)"]) else r["Écart-type (j)"],
+                                lambda r: f"NS {r['Écart-type (j)']:.2f}" if r["Nb factures"] < 5 and pd.notna(r["Écart-type (j)"]) else r["Écart-type (j)"],
                                 axis=1
                             )
                             cols_to_show = ["Assureur", "Nb factures", "Moyenne (j)"]
@@ -1056,8 +1056,8 @@ elif st.session_state.page == "medecins":
                 stats_ca = df_m.groupby("medecin")["ca"].sum().reset_index(name="CA Global")
                 ca_90 = df_m[df_m["date_f"] >= t_90j].groupby("medecin")["ca"].sum().reset_index(name="CA 90j")
                 tab_final = stats_ca.merge(ca_ref, on="medecin", how="left").merge(ca_90, on="medecin", how="left").fillna(0)
-                tab_final["Taux 90j (CHF/j)"]  = (tab_final["CA 90j"] / jo_90).round(1)
-                tab_final[label_taux_ref] = (tab_final[label_ref] / jo_ref).round(1)
+                tab_final["Taux 90j (CHF/j)"]  = (tab_final["CA 90j"] / jo_90).round(2)
+                tab_final[label_taux_ref] = (tab_final[label_ref] / jo_ref).round(2)
                 tab_final["Tendance"] = tab_final.apply(
                     lambda r: calculer_tendance(r["CA 90j"], r[label_ref], jo_90, jo_ref), axis=1
                 )
@@ -1228,8 +1228,8 @@ elif st.session_state.page == "tarifs":
                 ca_90_g      = df_filtered[df_filtered[nom_col_date] >= t_90j].groupby(group_col)[nom_col_somme].sum().reset_index(name="CA 90j")
 
                 tab_perf = stats_global.merge(ca_ref_g, on=group_col, how="left").merge(ca_90_g, on=group_col, how="left").fillna(0)
-                tab_perf["Taux 90j (CHF/j)"] = (tab_perf["CA 90j"]  / jo_90).round(1)
-                tab_perf[label_taux_ref]      = (tab_perf[label_ref] / jo_ref).round(1)
+                tab_perf["Taux 90j (CHF/j)"] = (tab_perf["CA 90j"]  / jo_90).round(2)
+                tab_perf[label_taux_ref]      = (tab_perf[label_ref] / jo_ref).round(2)
                 tab_perf["Tendance"] = tab_perf.apply(
                     lambda r: calculer_tendance(r["CA 90j"], r[label_ref], jo_90, jo_ref), axis=1
                 )
@@ -1617,7 +1617,7 @@ elif st.session_state.page == "retrocession":
                     "CA (CHF)": st.column_config.NumberColumn("CA (CHF)", disabled=True, format="%.2f"),
                     "Taux (%)": st.column_config.NumberColumn(
                         "Rétrocession (%)",
-                        min_value=0.0, max_value=100.0, step=0.5, format="%.1f",
+                        min_value=0.0, max_value=100.0, step=0.5, format="%.2f",
                         help="Entrez le % de rétrocession pour ce code. 0 = aucune retenue."
                     ),
                 },
@@ -1654,7 +1654,7 @@ elif st.session_state.page == "retrocession":
                 col1.metric("CA total période", f"{total_ca:,.2f} CHF")
                 col2.metric("CA soumis à rétrocession", f"{ca_couvert:,.2f} CHF")
                 col3.metric("💰 Rétrocession due", f"{total_retro:,.2f} CHF",
-                    delta=f"{(total_retro/total_ca*100):.1f}% du CA total" if total_ca > 0 else None)
+                    delta=f"{(total_retro/total_ca*100):.2f}% du CA total" if total_ca > 0 else None)
 
                 st.markdown("#### Détail par code")
                 st.dataframe(
