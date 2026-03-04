@@ -67,6 +67,95 @@ def generer_pdf_tableau(titre, df, sous_titre=""):
     buf.seek(0)
     return buf
 
+def generer_pdf_graphique_matplotlib(titre, df, sous_titre="", kind="line", xlabel="", ylabel="CHF"):
+    """Génère un PDF contenant un graphique matplotlib à partir d'un DataFrame."""
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+    import matplotlib.ticker as mticker
+    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.lib import colors
+    from reportlab.lib.units import cm
+    from reportlab.platypus import SimpleDocTemplate, Image as RLImage, Paragraph, Spacer
+    from reportlab.lib.styles import ParagraphStyle
+    from reportlab.lib.enums import TA_CENTER
+    import io as _io_pdf
+    import tempfile, os
+
+    # Tracer le graphique
+    fig, ax = plt.subplots(figsize=(14, 6))
+    if kind == "line":
+        for col in df.columns:
+            ax.plot(df.index, df[col], marker='o', linewidth=2, label=str(col))
+    elif kind == "bar":
+        df.plot(kind='bar', ax=ax, width=0.7)
+    ax.set_title(titre, fontsize=14, fontweight='bold', pad=12)
+    ax.set_xlabel(xlabel, fontsize=10)
+    ax.set_ylabel(ylabel, fontsize=10)
+    ax.yaxis.set_major_formatter(mticker.FuncFormatter(lambda x, _: f"{x:,.0f}"))
+    ax.legend(loc='upper left', fontsize=8, ncol=min(4, len(df.columns)))
+    ax.grid(axis='y', linestyle='--', alpha=0.5)
+    plt.xticks(rotation=30, ha='right', fontsize=8)
+    plt.tight_layout()
+
+    # Sauvegarder en PNG temporaire
+    tmpf = tempfile.NamedTemporaryFile(suffix='.png', delete=False)
+    fig.savefig(tmpf.name, dpi=150, bbox_inches='tight')
+    plt.close(fig)
+
+    # Créer le PDF
+    buf = _io_pdf.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=landscape(A4),
+                            leftMargin=1.5*cm, rightMargin=1.5*cm,
+                            topMargin=1.5*cm, bottomMargin=1.5*cm)
+    titre_style = ParagraphStyle('t', fontSize=13, fontName='Helvetica-Bold', spaceAfter=4, alignment=TA_CENTER)
+    sous_style  = ParagraphStyle('s', fontSize=9,  fontName='Helvetica', spaceAfter=10, textColor=colors.grey, alignment=TA_CENTER)
+    page_w = landscape(A4)[0] - 3*cm
+    elems = [Paragraph(titre, titre_style)]
+    if sous_titre:
+        elems.append(Paragraph(sous_titre, sous_style))
+    elems.append(Spacer(1, 0.3*cm))
+    elems.append(RLImage(tmpf.name, width=page_w, height=page_w * 6/14))
+    elems.append(Spacer(1, 0.3*cm))
+    elems.append(Paragraph(f"Généré le {datetime.today().strftime('%d.%m.%Y')}", sous_style))
+    doc.build(elems)
+    os.unlink(tmpf.name)
+    buf.seek(0)
+    return buf
+
+def generer_pdf_plotly(titre, fig, sous_titre=""):
+    """Génère un PDF à partir d'un graphique Plotly (nécessite kaleido)."""
+    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.lib import colors
+    from reportlab.lib.units import cm
+    from reportlab.platypus import SimpleDocTemplate, Image as RLImage, Paragraph, Spacer
+    from reportlab.lib.styles import ParagraphStyle
+    from reportlab.lib.enums import TA_CENTER
+    import io as _io_pdf
+    import tempfile, os
+
+    tmpf = tempfile.NamedTemporaryFile(suffix='.png', delete=False)
+    fig.write_image(tmpf.name, width=1400, height=600, scale=2)
+
+    buf = _io_pdf.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=landscape(A4),
+                            leftMargin=1.5*cm, rightMargin=1.5*cm,
+                            topMargin=1.5*cm, bottomMargin=1.5*cm)
+    titre_style = ParagraphStyle('t', fontSize=13, fontName='Helvetica-Bold', spaceAfter=4, alignment=TA_CENTER)
+    sous_style  = ParagraphStyle('s', fontSize=9,  fontName='Helvetica', spaceAfter=10, textColor=colors.grey, alignment=TA_CENTER)
+    page_w = landscape(A4)[0] - 3*cm
+    elems = [Paragraph(titre, titre_style)]
+    if sous_titre:
+        elems.append(Paragraph(sous_titre, sous_style))
+    elems.append(Spacer(1, 0.3*cm))
+    elems.append(RLImage(tmpf.name, width=page_w, height=page_w * 6/14))
+    elems.append(Spacer(1, 0.3*cm))
+    elems.append(Paragraph(f"Généré le {datetime.today().strftime('%d.%m.%Y')}", sous_style))
+    doc.build(elems)
+    os.unlink(tmpf.name)
+    buf.seek(0)
+    return buf
+
 def jours_ouvres(date_debut, date_fin, jours_cabinet=None):
     """Nombre de jours où le cabinet était réellement ouvert entre deux dates.
     Si jours_cabinet (set de date) est fourni, on compte les jours avec prestations.
@@ -821,8 +910,14 @@ elif st.session_state.page == "factures":
                         if assur_sel:
                             df_plot = df_pv.loc[assur_sel].T
                             df_plot.index = pd.CategoricalIndex(df_plot.index, categories=ordre_chrono, ordered=True)
-                            st.line_chart(df_plot.sort_index())
+                            df_plot_sorted = df_plot.sort_index()
+                            st.line_chart(df_plot_sorted)
                             st.dataframe(df_pv.loc[assur_sel].style.highlight_max(axis=1, color='#ff9999').highlight_min(axis=1, color='#99ff99'))
+                            try:
+                                _pdf_buf = generer_pdf_graphique_matplotlib("Évolution des délais de paiement", df_plot_sorted.reset_index().set_index("Période"), ylabel="Délai moyen (jours)")
+                                st.download_button("📄 Télécharger le graphique en PDF", _pdf_buf, file_name="evolution_delais.pdf", mime="application/pdf", key="pdf_evol_graph", use_container_width=True)
+                            except Exception as _e:
+                                st.caption(f"Export PDF indisponible : {_e}")
         except Exception as e: st.error(f"Erreur d'analyse : {e}")
 
 # ==========================================
@@ -990,6 +1085,12 @@ elif st.session_state.page == "medecins":
                     trend_layer = base.transform_regression('M_Date', 'ca', groupby=['medecin']).mark_line(size=4, strokeDash=[6, 4])
                     chart = data_layer if visibility == "Données" else trend_layer if visibility == "Ligne" else data_layer + trend_layer
                     st.altair_chart(chart, use_container_width=True)
+                    try:
+                        _df_med_chart = df_p.groupby(["M_Date", "medecin"])["ca"].sum().unstack(fill_value=0)
+                        _pdf_buf = generer_pdf_graphique_matplotlib("CA par médecin", _df_med_chart, sous_titre=f"Calculé au {datetime.today().strftime('%d.%m.%Y')}", ylabel="CA (CHF)")
+                        st.download_button("📄 Télécharger le graphique en PDF", _pdf_buf, file_name="medecins_graphique.pdf", mime="application/pdf", key="pdf_med_graph", use_container_width=True)
+                    except Exception as _e:
+                        st.caption(f"Export PDF indisponible : {_e}")
                     cols_affichage = ["medecin", "Tendance", "CA Global", label_ref, label_taux_ref, "CA 90j", "Taux 90j (CHF/j)"]
                     st.dataframe(tab_final[tab_final["medecin"].isin(choix)].sort_values("CA Global", ascending=False)[cols_affichage], use_container_width=True, hide_index=True)
                     _df_pdf_med = tab_final[tab_final["medecin"].isin(choix)].sort_values("CA Global", ascending=False)[cols_affichage]
@@ -1079,6 +1180,16 @@ elif st.session_state.page == "tarifs":
 
                 fig.update_xaxes(dtick="M1", tickformat="%b %Y")
                 st.plotly_chart(fig, use_container_width=True)
+                try:
+                    _pdf_buf = generer_pdf_plotly(f"Évolution CA — {view_mode}", fig, sous_titre=f"Calculé au {reference_date.strftime('%d.%m.%Y')}")
+                    st.download_button("📄 Télécharger le graphique en PDF", _pdf_buf, file_name="tarifs_graphique.pdf", mime="application/pdf", key="pdf_tarifs_graph", use_container_width=True)
+                except Exception as _e:
+                    try:
+                        _df_tarif_chart = df_plot.pivot(index='Mois', columns=target_col, values=nom_col_somme).fillna(0)
+                        _pdf_buf = generer_pdf_graphique_matplotlib(f"Évolution CA — {view_mode}", _df_tarif_chart, sous_titre=f"Calculé au {reference_date.strftime('%d.%m.%Y')}", ylabel="CA (CHF)")
+                        st.download_button("📄 Télécharger le graphique en PDF", _pdf_buf, file_name="tarifs_graphique.pdf", mime="application/pdf", key="pdf_tarifs_graph", use_container_width=True)
+                    except Exception as _e2:
+                        st.caption(f"Export PDF indisponible : {_e2}")
 
                 # 2. TABLEAU DES TENDANCES
                 st.markdown(f"### 📈 Performance par Tarif (Base : {reference_date.strftime('%d.%m.%Y')})")
