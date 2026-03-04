@@ -827,9 +827,13 @@ elif st.session_state.page == "factures":
                                 mean='mean', median='median', std='std', count='count'
                             ).reset_index()
                             stats.columns = ["Assureur", "Moyenne (j)", "Médiane (j)", "Écart-type (j)", "Nb factures"]
+                            # Arrondir à 2 décimales
+                            stats["Moyenne (j)"]    = stats["Moyenne (j)"].round(2)
+                            stats["Médiane (j)"]    = stats["Médiane (j)"].round(2)
                             # Écart-type non significatif sous 5 factures → préfixer NS
                             stats["Écart-type (j)"] = stats.apply(
-                                lambda r: f"NS {r['Écart-type (j)']:.2f}" if r["Nb factures"] < 5 and pd.notna(r["Écart-type (j)"]) else r["Écart-type (j)"],
+                                lambda r: f"NS {r['Écart-type (j)']:.2f}" if r["Nb factures"] < 5 and pd.notna(r["Écart-type (j)"])
+                                else (round(r["Écart-type (j)"], 2) if pd.notna(r["Écart-type (j)"]) else r["Écart-type (j)"]),
                                 axis=1
                             )
                             cols_to_show = ["Assureur", "Nb factures", "Moyenne (j)"]
