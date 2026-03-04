@@ -810,11 +810,13 @@ elif st.session_state.page == "factures":
 
                         # Le key change selon le top choisi → force Streamlit à re-rendre
                         # le multiselect avec le bon default à chaque changement de top
+                        # La clé intègre les lois et fournisseurs actifs → reset automatique si filtres changent
+                        _filtre_key = "_".join(sorted(sel_lois)) + "_" + "_".join(sorted(sel_fournisseurs))
                         assur_sel = st.multiselect(
                             "Sélectionner les assureurs :",
                             options=df_pv.index.tolist(),
                             default=defaut_sel,
-                            key=f"evol_assureurs_{top_choix}"
+                            key=f"evol_assureurs_{top_choix}_{_filtre_key}"
                         )
                         if assur_sel:
                             df_plot = df_pv.loc[assur_sel].T
