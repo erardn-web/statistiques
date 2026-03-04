@@ -157,51 +157,35 @@ def generer_pdf_plotly(titre, fig, sous_titre=""):
     return buf
 
 def bouton_imprimer_page(key="print_btn"):
-    """Injecte un bouton qui déclenche window.print() via postMessage au parent."""
-    st.components.v1.html(f"""
+    """Injecte le CSS d'impression et affiche un rappel Ctrl+P."""
+    st.markdown("""
         <style>
-            .print-btn {{
-                display: inline-flex;
-                align-items: center;
-                gap: 8px;
-                background-color: #1A6B9A;
-                color: white;
-                border: none;
-                border-radius: 6px;
-                padding: 8px 16px;
-                font-size: 14px;
-                font-weight: 500;
-                cursor: pointer;
-                width: 100%;
-                justify-content: center;
-                margin-top: 4px;
-            }}
-            .print-btn:hover {{ background-color: #155a82; }}
+        @media print {
+            section[data-testid="stSidebar"] { display: none !important; }
+            [data-testid="stToolbar"] { display: none !important; }
+            [data-testid="stDecoration"] { display: none !important; }
+            .stDownloadButton { display: none !important; }
+            .stButton { display: none !important; }
+            iframe { display: none !important; }
+            .block-container { padding: 0 2rem !important; max-width: 100% !important; }
+            .stPlotlyChart, .stAltairChart { page-break-inside: avoid; }
+            .stDataFrame { page-break-inside: avoid; }
+        }
+        .print-hint {
+            display: flex; align-items: center; gap: 10px;
+            background: #f0f7ff; border: 1px solid #1A6B9A;
+            border-radius: 6px; padding: 8px 14px;
+            font-size: 13px; color: #1A6B9A; margin-bottom: 8px;
+        }
         </style>
-        <button class="print-btn" onclick="triggerPrint()">
-            🖨️ Exporter la page en PDF
-        </button>
-        <script>
-            function triggerPrint() {{
-                // Inject print CSS and trigger print in the top-level window
-                var style = document.createElement('style');
-                style.id = 'streamlit-print-style';
-                style.innerHTML = `
-                    @media print {{
-                        section[data-testid="stSidebar"] {{ display: none !important; }}
-                        [data-testid="stToolbar"] {{ display: none !important; }}
-                        .stDownloadButton {{ display: none !important; }}
-                        iframe[title="streamlit_components"] {{ display: none !important; }}
-                        .block-container {{ padding: 0 !important; }}
-                    }}
-                `;
-                var existing = window.top.document.getElementById('streamlit-print-style');
-                if (existing) existing.remove();
-                window.top.document.head.appendChild(style);
-                window.top.print();
-            }}
-        </script>
-    """, height=48)
+        <div class="print-hint">
+            🖨️ <strong>Exporter en PDF</strong> — appuyez sur
+            <kbd style="background:#fff;border:1px solid #ccc;border-radius:3px;padding:1px 6px;font-size:12px">Ctrl+P</kbd>
+            (Windows) ou
+            <kbd style="background:#fff;border:1px solid #ccc;border-radius:3px;padding:1px 6px;font-size:12px">⌘+P</kbd>
+            (Mac), puis choisissez <em>Enregistrer en PDF</em>. Orientation <strong>Paysage</strong> recommandée.
+        </div>
+    """, unsafe_allow_html=True)
 
 def jours_ouvres(date_debut, date_fin, jours_cabinet=None):
     """Nombre de jours où le cabinet était réellement ouvert entre deux dates.
@@ -895,7 +879,11 @@ elif st.session_state.page == "factures":
                             st.dataframe(
                                 df_styled.style.applymap(colorier_ns, subset=["Écart-type (j)"]) if show_std else df_styled,
                                 use_container_width=True,
-                                column_config={"Écart-type (j)": st.column_config.TextColumn(help="NS = Non-significatif (< 5 factures)")}
+                                column_config={
+                                    "Moyenne (j)":    st.column_config.NumberColumn(format="%.2f"),
+                                    "Médiane (j)":    st.column_config.NumberColumn(format="%.2f"),
+                                    "Écart-type (j)": st.column_config.TextColumn(help="NS = Non-significatif (< 5 factures)")
+                                }
                             )
                             _pdf_buf = generer_pdf_tableau(f"Délais par assureur — {p_name}", df_styled, f"Période : {p_name}")
                             st.download_button("📄 Télécharger en PDF", _pdf_buf, file_name=f"delais_{p_name}.pdf", mime="application/pdf", key=f"pdf_delais_{p_name}", use_container_width=True)
@@ -1147,7 +1135,8 @@ elif st.session_state.page == "medecins":
                     cols_affichage = ["medecin", "Tendance", "CA Global", label_ref, label_taux_ref, "CA 90j", "Taux 90j (CHF/j)"]
                     _df_disp_med = tab_final[tab_final["medecin"].isin(choix)].sort_values("CA Global", ascending=False)[cols_affichage].copy()
                     _df_disp_med = _df_disp_med.apply(lambda c: c.round(2) if c.dtype.kind == 'f' else c)
-                    st.dataframe(_df_disp_med, use_container_width=True, hide_index=True)
+                    _num_cols_med = {c: st.column_config.NumberColumn(format="%.2f") for c in _df_disp_med.select_dtypes("float").columns}
+                    st.dataframe(_df_disp_med, use_container_width=True, hide_index=True, column_config=_num_cols_med)
                     _df_pdf_med = tab_final[tab_final["medecin"].isin(choix)].sort_values("CA Global", ascending=False)[cols_affichage]
                     _df_pdf_med = _df_pdf_med.apply(lambda c: c.round(2) if c.dtype.kind == 'f' else c)
                     _pdf_buf = generer_pdf_tableau("Performance Médecins", _df_pdf_med, f"Calculé au {datetime.today().strftime('%d.%m.%Y')}")
@@ -1452,6 +1441,7 @@ elif st.session_state.page == "bilan":
                 pivot_total.index = ["TOTAL GÉNÉRAL"]
                 pivot_final = pd.concat([pivot_fourn, pivot_total])
                 
+                pivot_final = pivot_final.round(2)
                 st.dataframe(pivot_final.style.format("{:.2f}").highlight_max(axis=0, color="#d4f1f9"), use_container_width=True)
 
             # --- SECTION IMPAYÉS AU 31.12 ---
@@ -1721,7 +1711,12 @@ elif st.session_state.page == "retrocession":
                 st.dataframe(
                     detail[["Code", "Nb prestations", "CA (CHF)", "Taux (%)", "Rétrocession (CHF)"]].sort_values("Rétrocession (CHF)", ascending=False),
                     use_container_width=True,
-                    hide_index=True
+                    hide_index=True,
+                    column_config={
+                        "CA (CHF)":           st.column_config.NumberColumn(format="%.2f"),
+                        "Taux (%)":           st.column_config.NumberColumn(format="%.2f"),
+                        "Rétrocession (CHF)": st.column_config.NumberColumn(format="%.2f"),
+                    }
                 )
                 _df_retro_pdf = detail[["Code", "Nb prestations", "CA (CHF)", "Taux (%)", "Rétrocession (CHF)"]].sort_values("Rétrocession (CHF)", ascending=False)
                 _pdf_buf = generer_pdf_tableau(f"Décompte Rétrocession — {label_periode}", _df_retro_pdf, f"Total dû : {total_retro:,.2f} CHF")
