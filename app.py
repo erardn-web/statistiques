@@ -678,12 +678,20 @@ elif st.session_state.page == "factures":
                     with tab2:
                         st.subheader(f"Délais par assureur ({p_name})")
                         if not p_hist.empty:
-                            stats = p_hist.groupby("assureur")["delai"].agg(['mean', 'median', 'std']).reset_index()
-                            stats.columns = ["Assureur", "Moyenne (j)", "Médiane (j)", "Écart-type (j)"]
-                            cols_to_show = ["Assureur", "Moyenne (j)"]
+                            stats = p_hist.groupby("assureur")["delai"].agg(
+                                mean='mean', median='median', std='std', count='count'
+                            ).reset_index()
+                            stats.columns = ["Assureur", "Moyenne (j)", "Médiane (j)", "Écart-type (j)", "Nb factures"]
+                            # Écart-type non significatif sous 5 factures → afficher NaN
+                            stats.loc[stats["Nb factures"] < 5, "Écart-type (j)"] = None
+                            cols_to_show = ["Assureur", "Nb factures", "Moyenne (j)"]
                             if show_med: cols_to_show.append("Médiane (j)")
                             if show_std: cols_to_show.append("Écart-type (j)")
-                            st.dataframe(stats[cols_to_show].sort_values("Moyenne (j)", ascending=False), use_container_width=True)
+                            st.dataframe(
+                                stats[cols_to_show].sort_values("Moyenne (j)", ascending=False),
+                                use_container_width=True,
+                                column_config={"Écart-type (j)": st.column_config.NumberColumn(format="%.1f", help="Affiché uniquement si ≥ 5 factures")}
+                            )
                     with tab3:
                         st.subheader(f"Analyse des retards > 30j ({p_name})")
                         df_att_30 = f_att[f_att["delai_actuel"] > 30].copy()
