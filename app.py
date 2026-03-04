@@ -585,6 +585,8 @@ elif st.session_state.page == "factures":
             st.sidebar.header("📊 3. Options Délais")
             show_med = st.sidebar.checkbox("Afficher la Médiane", value=True)
             show_std = st.sidebar.checkbox("Afficher l'Écart-type", value=True)
+            regrouper_assureurs = st.sidebar.checkbox("Regrouper par groupe d'assureurs", value=False,
+                help="Fusionne les assureurs appartenant au même groupe (ex. Le Groupe Mutuel + Philos → Groupe Mutuel)")
             st.sidebar.header("📅 4. Périodes & Simulation")
             options_p = {"Global": None, "6 mois": 6, "4 mois": 4, "3 mois": 3, "2 mois": 2, "1 mois": 1}
             periods_sel = st.sidebar.multiselect("Analyser les périodes :", list(options_p.keys()), default=["Global", "4 mois"])
@@ -608,6 +610,38 @@ elif st.session_state.page == "factures":
             df["montant"] = pd.to_numeric(df["montant"], errors="coerce").fillna(0)
             df["statut"] = df["statut"].astype(str).str.lower().str.strip()
             df["assureur"] = df["assureur"].fillna("Patient")
+
+            # --- GROUPES D'ASSUREURS SUISSES ---
+            # Mapping : nom exact dans Ephysio → nom du groupe affiché
+            # LCA et LAI exclues du regroupement
+            GROUPES_NOM = {
+                # LAMal — Groupe Mutuel
+                "Philos, caisse maladie":            "Groupe Mutuel, caisse maladie",
+                "Caisse maladie Avenir":              "Groupe Mutuel, caisse maladie",
+                "Easy Sana caisse maladie":           "Groupe Mutuel, caisse maladie",
+                "SUPRA-1846 SA":                      "Groupe Mutuel, caisse maladie",
+                # LAMal — CSS
+                "Arcosana":                           "CSS Assurances",
+                "Intras, caisse maladie":              "CSS Assurances",
+                # LAMal — Helsana
+                "Progrès (incl. Sansan)":              "Helsana Assurances",
+                # LAMal — Visana
+                "sana24":                              "Visana Services AG",
+                "vivacare":                            "Visana Services AG",
+                "GALENOS":                             "Visana Services AG",
+                # LAA — Groupe Mutuel
+                "Caisse maladie Avenir (accident)":    "Groupe Mutuel, caisse maladie (accident)",
+            }
+            LOI_EXCLUES_REGROUPEMENT = {"LCA", "LAI"}
+
+            if regrouper_assureurs:
+                def appliquer_groupe(row):
+                    if row["loi"] in LOI_EXCLUES_REGROUPEMENT:
+                        return row["assureur"]
+                    return GROUPES_NOM.get(str(row["assureur"]).strip(), str(row["assureur"]).strip())
+                df["assureur"] = df.apply(appliquer_groupe, axis=1)
+                st.sidebar.caption("✅ Regroupement actif — LCA et LAI non fusionnées.")
+
             ajd = pd.Timestamp(datetime.today().date())
             f_att = df[df["statut"].str.startswith("en attente") & (df["statut"] != "en attente (annulé)")].copy()
             f_att["delai_actuel"] = (ajd - f_att["date_facture"]).dt.days
