@@ -244,17 +244,17 @@ def jours_ouvres(date_debut, date_fin, jours_cabinet=None):
         return max(sum(1 for d in pd.date_range(date_debut, date_fin) if d.date() in jours_cabinet), 1)
     return max(len(pd.bdate_range(date_debut, date_fin)), 1)
 
-def calculer_tendance(ca_90j, ca_365j, jo_90, jo_365):
-    """Compare le taux journalier (CHF/jour ouvré) des 90 derniers jours
+def calculer_tendance(ca_60j, ca_365j, jo_60, jo_365):
+    """Compare le taux journalier (CHF/jour ouvré) des 60 derniers jours
     vs les 365 derniers jours. Neutre aux vacances, Noël, ponts, etc.
     Seuils : variation > +10% → Hausse, < -10% → Baisse.
     Si pas d'historique sur la période de référence → Nouveau."""
-    if ca_90j > 0 and ca_365j == 0:
+    if ca_60j > 0 and ca_365j == 0:
         return "🆕 Nouveau"
-    if ca_90j == 0 and ca_365j == 0:
+    if ca_60j == 0 and ca_365j == 0:
         return "—"
-    if ca_365j > 0 and jo_365 > 0 and jo_90 > 0:
-        taux_90  = ca_90j  / jo_90
+    if ca_365j > 0 and jo_365 > 0 and jo_60 > 0:
+        taux_90  = ca_60j  / jo_60
         taux_365 = ca_365j / jo_365
         variation = (taux_90 - taux_365) / taux_365 * 100
         if variation <= -10: return f"↘️ Baisse ({variation:+.1f}%/j)"
@@ -471,14 +471,14 @@ def render_stats_patients():
             ]
             nb_chroniques = len(chroniques_actifs)
 
-            # Cadence hebdomadaire des chroniques (sur les 90 derniers jours de l'export)
+            # Cadence hebdomadaire des chroniques (sur les 60 derniers jours de l'export)
             # = nombre moyen de séances/semaine par chronique récemment
-            seuil_90 = derniere_date - timedelta(days=90)
-            jo_90_flux = jours_ouvres(seuil_90, derniere_date, jours_cabinet_flux)
-            semaines_90 = jo_90_flux / 5  # semaines ouvrées
+            seuil_60 = derniere_date - timedelta(days=60)
+            jo_60_flux = jours_ouvres(seuil_60, derniere_date, jours_cabinet_flux)
+            semaines_90 = jo_60_flux / 5  # semaines ouvrées
             seances_chroniques_90 = df_physio[
                 df_physio["_pat"].isin(chroniques_actifs["_pat"]) &
-                (df_physio["_date"] >= seuil_90)
+                (df_physio["_date"] >= seuil_60)
             ]
             rdv_chron_sem = (len(seances_chroniques_90) / semaines_90) if semaines_90 > 0 else 0
 
@@ -1181,18 +1181,18 @@ elif st.session_state.page == "medecins":
                 # --- Sélecteur de méthode de tendance ---
                 st.markdown("### 📊 Méthode de calcul de tendance")
                 methode_tendance = st.radio(
-                    "Comparer les 90 derniers jours avec :",
-                    ["📅 Les 365 derniers jours (méthode actuelle)", "📆 Les mêmes 90 jours de l'année précédente (anti-saisonnalité)"],
+                    "Comparer les 60 derniers jours avec :",
+                    ["📅 Les 365 derniers jours (méthode actuelle)", "📆 Les mêmes 60 jours de l'année précédente (anti-saisonnalité)"],
                     horizontal=True, key="methode_tendance"
                 )
                 annee_sur_annee = "précédente" in methode_tendance
 
-                t_90j = ajd - pd.DateOffset(days=90)
-                jo_90 = jours_ouvres(t_90j, ajd, jours_cabinet)
+                t_60j = ajd - pd.DateOffset(days=60)
+                jo_60 = jours_ouvres(t_60j, ajd, jours_cabinet)
 
                 if annee_sur_annee:
                     t_ref_fin   = ajd   - pd.DateOffset(years=1)
-                    t_ref_debut = t_90j - pd.DateOffset(years=1)
+                    t_ref_debut = t_60j - pd.DateOffset(years=1)
                 if annee_sur_annee:
                     jo_ref = jours_ouvres(t_ref_debut, t_ref_fin, jours_cabinet)
                     label_ref = "CA même période N-1"
@@ -1206,12 +1206,12 @@ elif st.session_state.page == "medecins":
                     ca_ref = df_m[df_m["date_f"] >= t_365j].groupby("medecin")["ca"].sum().reset_index(name=label_ref)
 
                 stats_ca = df_m.groupby("medecin")["ca"].sum().reset_index(name="CA Global")
-                ca_90 = df_m[df_m["date_f"] >= t_90j].groupby("medecin")["ca"].sum().reset_index(name="CA 90j")
-                tab_final = stats_ca.merge(ca_ref, on="medecin", how="left").merge(ca_90, on="medecin", how="left").fillna(0)
-                tab_final["Taux 90j (CHF/j)"]  = (tab_final["CA 90j"] / jo_90).round(2)
+                ca_60 = df_m[df_m["date_f"] >= t_60j].groupby("medecin")["ca"].sum().reset_index(name="CA 60j")
+                tab_final = stats_ca.merge(ca_ref, on="medecin", how="left").merge(ca_60, on="medecin", how="left").fillna(0)
+                tab_final["Taux 60j (CHF/j)"]  = (tab_final["CA 60j"] / jo_60).round(2)
                 tab_final[label_taux_ref] = (tab_final[label_ref] / jo_ref).round(2)
                 tab_final["Tendance"] = tab_final.apply(
-                    lambda r: calculer_tendance(r["CA 90j"], r[label_ref], jo_90, jo_ref), axis=1
+                    lambda r: calculer_tendance(r["CA 60j"], r[label_ref], jo_60, jo_ref), axis=1
                 )
 
                 st.markdown("### 🏆 Sélection et Visualisation")
@@ -1247,19 +1247,19 @@ elif st.session_state.page == "medecins":
                     _df_base = _df_base.apply(lambda c: c.round(2) if c.dtype.kind == 'f' else c)
 
                     # Les deux modes utilisent les taux CHF/j — neutralise les jours fériés et fermetures
-                    cols_affichage = ["medecin", label_taux_ref, "Taux 90j (CHF/j)", "Tendance", label_ref, "CA 90j", "CA Global"]
+                    cols_affichage = ["medecin", label_taux_ref, "Taux 60j (CHF/j)", "Tendance", label_ref, "CA 60j", "CA Global"]
                     _df_disp_med = _df_base[cols_affichage].copy()
                     legende_med = (
-                        f"🔵 <b>{label_taux_ref}</b> vs <b>Taux 90j</b> — comparaison en CHF/j (neutralise jours fériés et fermetures)"
+                        f"🔵 <b>{label_taux_ref}</b> vs <b>Taux 60j</b> — comparaison en CHF/j (neutralise jours fériés et fermetures)"
                     )
                     st.markdown(f"<small>{legende_med}</small>", unsafe_allow_html=True)
                     st.dataframe(_df_disp_med, use_container_width=True, hide_index=True, column_config={
                         "medecin":            st.column_config.TextColumn("Médecin"),
                         label_taux_ref:       st.column_config.NumberColumn(f"⟵ {label_taux_ref}", format="%.2f", help="Période de référence"),
-                        "Taux 90j (CHF/j)":  st.column_config.NumberColumn("⟵ Taux 90j (CHF/j)", format="%.2f", help="Période récente — à comparer avec la colonne précédente"),
+                        "Taux 60j (CHF/j)":  st.column_config.NumberColumn("⟵ Taux 60j (CHF/j)", format="%.2f", help="Période récente — à comparer avec la colonne précédente"),
                         "Tendance":           st.column_config.TextColumn("Tendance"),
                         label_ref:            st.column_config.NumberColumn(f"{label_ref} (CHF)", format="%.2f"),
-                        "CA 90j":             st.column_config.NumberColumn("CA 90j (CHF)", format="%.2f"),
+                        "CA 60j":             st.column_config.NumberColumn("CA 60j (CHF)", format="%.2f"),
                         "CA Global":          st.column_config.NumberColumn("CA Global (CHF)", format="%.2f"),
                     })
 
@@ -1322,8 +1322,8 @@ elif st.session_state.page == "tarifs":
             view_mode = st.radio("Affichage :", ["Profession", "Code tarifaire"], horizontal=True)
             chart_type = st.radio("Style :", ["Barres", "Courbes"], horizontal=True)
             methode_tarif = st.radio(
-                "Tendance — comparer les 90 derniers jours avec :",
-                ["📅 Les 365 derniers jours (méthode actuelle)", "📆 Les mêmes 90 jours de l'année précédente (anti-saisonnalité)"],
+                "Tendance — comparer les 60 derniers jours avec :",
+                ["📅 Les 365 derniers jours (méthode actuelle)", "📆 Les mêmes 60 jours de l'année précédente (anti-saisonnalité)"],
                 horizontal=True, key="methode_tarif"
             )
 
@@ -1369,12 +1369,12 @@ elif st.session_state.page == "tarifs":
                 jours_cabinet_t = set(ca_par_jour_t[ca_par_jour_t >= seuil_jour_tar].index)  # Jours réels du cabinet avec min de facturation
                 annee_sur_annee_t = "précédente" in methode_tarif
 
-                t_90j = reference_date - pd.DateOffset(days=90)
-                jo_90 = jours_ouvres(t_90j, reference_date, jours_cabinet_t)
+                t_60j = reference_date - pd.DateOffset(days=60)
+                jo_60 = jours_ouvres(t_60j, reference_date, jours_cabinet_t)
 
                 if annee_sur_annee_t:
                     t_ref_fin   = reference_date - pd.DateOffset(years=1)
-                    t_ref_debut = t_90j          - pd.DateOffset(years=1)
+                    t_ref_debut = t_60j          - pd.DateOffset(years=1)
                 if annee_sur_annee_t:
                     jo_ref      = jours_ouvres(t_ref_debut, t_ref_fin, jours_cabinet_t)
                     label_ref   = "CA même période N-1"
@@ -1396,13 +1396,13 @@ elif st.session_state.page == "tarifs":
                     ca_ref_g = df_filtered[df_filtered[nom_col_date] >= t_365j].groupby(group_col)[nom_col_somme].sum().reset_index(name=label_ref)
 
                 stats_global = df_filtered.groupby(group_col)[nom_col_somme].sum().reset_index(name="CA Global")
-                ca_90_g      = df_filtered[df_filtered[nom_col_date] >= t_90j].groupby(group_col)[nom_col_somme].sum().reset_index(name="CA 90j")
+                ca_60_g      = df_filtered[df_filtered[nom_col_date] >= t_60j].groupby(group_col)[nom_col_somme].sum().reset_index(name="CA 60j")
 
-                tab_perf = stats_global.merge(ca_ref_g, on=group_col, how="left").merge(ca_90_g, on=group_col, how="left").fillna(0)
-                tab_perf["Taux 90j (CHF/j)"] = (tab_perf["CA 90j"]  / jo_90).round(2)
+                tab_perf = stats_global.merge(ca_ref_g, on=group_col, how="left").merge(ca_60_g, on=group_col, how="left").fillna(0)
+                tab_perf["Taux 60j (CHF/j)"] = (tab_perf["CA 60j"]  / jo_60).round(2)
                 tab_perf[label_taux_ref]      = (tab_perf[label_ref] / jo_ref).round(2)
                 tab_perf["Tendance"] = tab_perf.apply(
-                    lambda r: calculer_tendance(r["CA 90j"], r[label_ref], jo_90, jo_ref), axis=1
+                    lambda r: calculer_tendance(r["CA 60j"], r[label_ref], jo_60, jo_ref), axis=1
                 )
 
                 # Pour le mode code : ajouter le nom de la prestation en tooltip
@@ -1436,19 +1436,19 @@ elif st.session_state.page == "tarifs":
                         nom = str(r.get("Prestation", ""))
                         first_cell = f'<td><span title="{nom}" style="cursor:help;border-bottom:1px dotted #999">{val}</span></td>'
                     # Delta % pour mode N-1
-                    ca_90_val = r["CA 90j"]
+                    ca_60_val = r["CA 60j"]
                     ca_ref_val = r[label_ref]
-                    delta_pct = f"{((ca_90_val - ca_ref_val) / ca_ref_val * 100):+.1f}%" if ca_ref_val and ca_ref_val != 0 else "—"
+                    delta_pct = f"{((ca_60_val - ca_ref_val) / ca_ref_val * 100):+.1f}%" if ca_ref_val and ca_ref_val != 0 else "—"
 
                     # Les deux modes : taux CHF/j — neutralise jours fériés et fermetures
                     rows += (
                         f'<tr>'
                         f'{first_cell}'
                         f'<td style="text-align:right;background:#EBF5FB;font-weight:600">{chf(r[label_taux_ref])}</td>'
-                        f'<td style="text-align:right;background:#EBF5FB;font-weight:600">{chf(r["Taux 90j (CHF/j)"])}</td>'
+                        f'<td style="text-align:right;background:#EBF5FB;font-weight:600">{chf(r["Taux 60j (CHF/j)"])}</td>'
                         f'<td>{tendance_html(r["Tendance"])}</td>'
                         f'<td style="text-align:right">{chf(r[label_ref])}</td>'
-                        f'<td style="text-align:right">{chf(r["CA 90j"])}</td>'
+                        f'<td style="text-align:right">{chf(r["CA 60j"])}</td>'
                         f'<td style="text-align:right">{chf(r["CA Global"])}</td>'
                         f'</tr>'
                     )
@@ -1459,11 +1459,11 @@ elif st.session_state.page == "tarifs":
                 headers = (
                     f"<th>{first_col_header}</th>"
                     f"<th style='background:#D6EAF8'>⟵ {label_taux_ref}</th>"
-                    f"<th style='background:#D6EAF8'>⟵ Taux 90j (CHF/j)</th>"
+                    f"<th style='background:#D6EAF8'>⟵ Taux 60j (CHF/j)</th>"
                     f"<th>Tendance</th>"
-                    f"<th>{label_ref} (CHF)</th><th>CA 90j (CHF)</th><th>CA Global (CHF)</th>"
+                    f"<th>{label_ref} (CHF)</th><th>CA 60j (CHF)</th><th>CA Global (CHF)</th>"
                 )
-                legende = f"<small>🔵 <b>{label_taux_ref}</b> vs <b>Taux 90j</b> — comparaison en CHF/j (neutralise jours fériés et fermetures)</small>"
+                legende = f"<small>🔵 <b>{label_taux_ref}</b> vs <b>Taux 60j</b> — comparaison en CHF/j (neutralise jours fériés et fermetures)</small>"
 
                 html_table = (
                     "<style>"
@@ -1484,7 +1484,7 @@ elif st.session_state.page == "tarifs":
                 st.markdown(html_table, unsafe_allow_html=True)
                 # PDF du tableau tarifs
                 if not tab_sorted.empty:
-                    _cols_pdf_t = [group_col, "Tendance", "CA Global", label_ref, label_taux_ref, "CA 90j", "Taux 90j (CHF/j)"]
+                    _cols_pdf_t = [group_col, "Tendance", "CA Global", label_ref, label_taux_ref, "CA 60j", "Taux 60j (CHF/j)"]
                     _cols_pdf_t = [c for c in _cols_pdf_t if c in tab_sorted.columns]
                     _df_pdf_t = tab_sorted[_cols_pdf_t].copy()
                     _df_pdf_t.columns = [str(c) for c in _df_pdf_t.columns]
