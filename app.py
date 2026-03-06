@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 import altair as alt
 
 # --- CONFIGURATION PAGE WEB ---
-st.set_page_config(page_title="Analyseur de Facturation Pro", layout="wide", page_icon="🏥")
+st.set_page_config(page_title="36.9°", layout="wide", page_icon="🏥")
 
 # --- CONSTANTES ET LOGIQUE MÉTIER ---
 MOTS_EXCLUSION = {"BERNOIS", "NEUCHATELOIS", "VALAISANS", "GENEVOIS", "VAUDOIS", "FRIBOURGEOIS"}
@@ -719,7 +719,8 @@ if st.session_state.page == "accueil":
         margin-bottom: 32px;
         color: white;
     }
-    .accueil-hero h1 { font-size: 1.5rem; font-weight: 700; margin: 0; letter-spacing: -0.5px; }
+    .accueil-hero h1 { font-size: 1.8rem; font-weight: 700; margin: 0 0 4px 0; letter-spacing: -0.5px; }
+    .accueil-hero p  { font-size: 0.85rem; opacity: 0.7; margin: 0; }
 
     .section-label {
         font-size: 0.7rem;
@@ -767,7 +768,8 @@ if st.session_state.page == "accueil":
     # Hero header
     st.markdown("""
     <div class="accueil-hero">
-        <h1>🏥 Analyse Ephysio</h1>
+        <h1>36.9°</h1>
+        <p>Tableau de bord analytique pour cabinets paramédicaux</p>
     </div>
     """, unsafe_allow_html=True)
 
