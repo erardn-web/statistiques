@@ -39,6 +39,44 @@ def chf_int(valeur):
     except:
         return str(valeur)
 
+def resoudre_colonnes(df):
+    """Détecte les colonnes d'un export Factures Ephysio par leur nom.
+    Compatible export mono-thérapeute (20 col) et multi-thérapeutes (23 col).
+    Retourne un dict {nom_logique: nom_colonne_réel}."""
+    cols = {str(c).strip(): c for c in df.columns}
+    cols_lower = {str(c).strip().lower(): c for c in df.columns}
+
+    def trouver(candidats):
+        for c in candidats:
+            if c.lower() in cols_lower:
+                return cols_lower[c.lower()]
+        return None
+
+    return {
+        # Export Factures
+        "date_facture":   trouver(["date"]),
+        "loi":            trouver(["loi"]),
+        "tp_tg":          trouver(["tp/tg"]),
+        "patient":        trouver(["patient"]),
+        "medecin":        trouver(["médecin prescripteur", "medecin prescripteur"]),
+        "assureur":       trouver(["assurance"]),
+        "fournisseur":    trouver(["fournisseur de prestation", "fournisseur"]),
+        "statut":         trouver(["statut"]),
+        "montant":        trouver(["montant chf", "montant"]),
+        "chiffre":        trouver(["chiffre chf", "chiffre"]),
+        "date_paiement":  trouver(["date payment"]),
+        "montant_paye":   trouver(["montant payment"]),
+        "num_patient":    trouver(["#patient"]),
+        # Export Prestations (onglet Prestation — stable dans tous les exports)
+        "code_tarifaire": trouver(["code tarifaire"]),
+        "description":    trouver(["description du tarif", "description"]),
+        "quantite":       trouver(["quantité", "quantite"]),
+        "nb_points":      trouver(["nombre de points"]),
+        "valeur_point":   trouver(["valeur du point"]),
+        "therapeute":     trouver(["thérapeute", "therapeute"]),
+        "facturation":    trouver(["facturation"]),
+    }
+
 def generer_pdf_tableau(titre, df, sous_titre=""):
     from reportlab.lib.pagesizes import A4, landscape
     from reportlab.lib import colors
@@ -288,7 +326,9 @@ def render_stats_patients():
     try:
         @st.cache_data
         def lire_prestations(f):
-            df = pd.read_excel(f, sheet_name='Prestation')
+            onglets = pd.ExcelFile(f).sheet_names
+            ong = next((s for s in onglets if s.strip().lower() == 'prestation'), None) or                   next((s for s in onglets if 'prestation' in s.lower()), onglets[0])
+            df = pd.read_excel(f, sheet_name=ong)
             df.columns = [str(c).strip() for c in df.columns]
             return df
 
@@ -296,7 +336,11 @@ def render_stats_patients():
         def get_full_analysis(file1, file2, delai_fin, seuil_jour):
             def parser(f):
                 df = lire_prestations(f)
-                c_date, c_tarif, c_pat, c_mont = df.columns[1], df.columns[2], df.columns[8], df.columns[11]
+                _csp = resoudre_colonnes(df)
+                c_date  = _csp["date_facture"]
+                c_tarif = df.columns[2]   # Code tarifaire — position stable col 2 dans Prestations
+                c_pat   = _csp["num_patient"] or df.columns[8]
+                c_mont  = _csp["chiffre"] or df.columns[11]
                 df[c_date] = pd.to_datetime(df[c_date], errors='coerce')
                 df[c_tarif] = df[c_tarif].astype(str).str.strip()
                 df[c_mont] = pd.to_numeric(df[c_mont], errors='coerce').fillna(0)
@@ -751,9 +795,13 @@ elif st.session_state.page == "factures":
             df_brut = lire_factures(uploaded_file)
             valider_colonnes(df_brut, 16, "Factures")
             st.sidebar.header("🔍 2. Filtres")
-            fournisseurs = df_brut.iloc[:, 9].dropna().unique().tolist()
+            _c_tmp = resoudre_colonnes(df_brut)
+            if _c_tmp["fournisseur"] is None:
+                df_brut["Fournisseur de prestation"] = "Cabinet"
+                _c_tmp["fournisseur"] = "Fournisseur de prestation"
+            fournisseurs = df_brut[_c_tmp["fournisseur"]].dropna().unique().tolist()
             sel_fournisseurs = st.sidebar.multiselect("Fournisseurs :", options=sorted(fournisseurs), default=fournisseurs)
-            lois = df_brut.iloc[:, 4].dropna().unique().tolist()
+            lois = df_brut[_c_tmp["loi"]].dropna().unique().tolist()
             sel_lois = st.sidebar.multiselect("Types de Loi :", options=sorted(lois), default=lois)
             st.sidebar.header("📊 3. Options Délais")
             show_med = st.sidebar.checkbox("Afficher la Médiane", value=True)
@@ -769,12 +817,21 @@ elif st.session_state.page == "factures":
                 st.session_state.analyse_lancee = True
             btn_simuler = col_b2.button("🔮 Simuler", use_container_width=True)
 
-            df = df_brut[(df_brut.iloc[:, 9].isin(sel_fournisseurs)) & (df_brut.iloc[:, 4].isin(sel_lois))].copy()
+            _c = resoudre_colonnes(df_brut)
+            # Fournisseur absent en mono-thérapeute → colonne virtuelle
+            if _c["fournisseur"] is None:
+                df_brut["Fournisseur de prestation"] = "Cabinet"
+                _c["fournisseur"] = "Fournisseur de prestation"
+
+            df = df_brut[
+                (df_brut[_c["fournisseur"]].isin(sel_fournisseurs)) &
+                (df_brut[_c["loi"]].isin(sel_lois))
+            ].copy()
             df = df.rename(columns={
-                df.columns[2]: "date_facture", df.columns[4]: "loi", 
-                df.columns[8]: "assureur", df.columns[9]: "fournisseur", 
-                df.columns[12]: "statut", df.columns[13]: "montant", 
-                df.columns[15]: "date_paiement"
+                _c["date_facture"]: "date_facture", _c["loi"]: "loi",
+                _c["assureur"]: "assureur", _c["fournisseur"]: "fournisseur",
+                _c["statut"]: "statut", _c["montant"]: "montant",
+                _c["date_paiement"]: "date_paiement"
             })
             
             df["date_facture"] = df["date_facture"].apply(convertir_date)
@@ -1001,7 +1058,7 @@ elif st.session_state.page == "medecins":
             valider_colonnes(df_brut, 15, "Médecins")
 
             # Bouton export config vierge basé sur les noms de l'export
-            noms_bruts = sorted(df_brut.iloc[:, 7].dropna().astype(str).str.strip().unique().tolist())
+            noms_bruts = sorted(df_brut[_cm["medecin"]].dropna().astype(str).str.strip().unique().tolist())
             df_export_cfg = pd.DataFrame({
                 "Nom canonique": noms_bruts,
                 "Variante 1": [""] * len(noms_bruts),
@@ -1021,14 +1078,18 @@ elif st.session_state.page == "medecins":
             )
 
             st.sidebar.header("🔍 Filtres")
-            fourn_med = sorted(df_brut.iloc[:, 9].dropna().unique().tolist())
+            _cm = resoudre_colonnes(df_brut)
+            if _cm["fournisseur"] is None:
+                df_brut["Fournisseur de prestation"] = "Cabinet"
+                _cm["fournisseur"] = "Fournisseur de prestation"
+            fourn_med = sorted(df_brut[_cm["fournisseur"]].dropna().unique().tolist())
             sel_fourn_med = st.sidebar.multiselect("Fournisseurs :", fourn_med, default=fourn_med)
             seuil_jour_med = st.sidebar.number_input("Montant min. pour jour ouvert (CHF) :", min_value=0, max_value=500, value=50, step=10, key="seuil_med")
-            df_m_init = df_brut[df_brut.iloc[:, 5].astype(str).str.upper() != "TG"].copy()
-            df_m_init = df_m_init[df_m_init.iloc[:, 9].isin(sel_fourn_med)]
+            df_m_init = df_brut[df_brut[_cm["tp_tg"]].astype(str).str.upper() != "TG"].copy()
+            df_m_init = df_m_init[df_m_init[_cm["fournisseur"]].isin(sel_fourn_med)]
 
             def moteur_fusion_securise(df):
-                noms_originaux = df.iloc[:, 7].dropna().unique()
+                noms_originaux = df[_cm["medecin"]].dropna().unique()
                 mapping = {}
                 def extraire_mots(texte):
                     mots = "".join(c if c.isalnum() else " " for c in str(texte)).upper().split()
@@ -1044,12 +1105,12 @@ elif st.session_state.page == "medecins":
                 return mapping
 
             regroupements = moteur_fusion_securise(df_m_init)
-            df_m_init.iloc[:, 7] = df_m_init.iloc[:, 7].replace(regroupements)
+            df_m_init[_cm["medecin"]] = df_m_init[_cm["medecin"]].replace(regroupements)
             
             ajd = pd.Timestamp(datetime.today().date())
-            df_m_init["medecin"] = df_m_init.iloc[:, 7].astype(str).str.strip()
-            df_m_init["ca"] = pd.to_numeric(df_m_init.iloc[:, 14], errors="coerce").fillna(0)
-            df_m_init["date_f"] = df_m_init.iloc[:, 2].apply(convertir_date)
+            df_m_init["medecin"] = df_m_init[_cm["medecin"]].astype(str).str.strip()
+            df_m_init["ca"] = pd.to_numeric(df_m_init[_cm["chiffre"]], errors="coerce").fillna(0)
+            df_m_init["date_f"] = df_m_init[_cm["date_facture"]].apply(convertir_date)
             df_m = df_m_init[(df_m_init["ca"] > 0) & (df_m_init["date_f"].notna()) & (df_m_init["date_f"] <= ajd) & (df_m_init["medecin"].notna())].copy()
             # Appliquer le mapping de la config cabinet (variantes → nom canonique)
             if st.session_state.config_medecins:
@@ -1533,10 +1594,11 @@ elif st.session_state.page == "retrocession":
             df_r = lire_retro(uploaded_retro)
             df_r.columns = [str(c).strip() for c in df_r.columns]
 
-            # Colonnes standard export Ephysio Prestations
-            c_date  = df_r.columns[1]
-            c_code  = df_r.columns[2]
-            c_mont  = df_r.columns[11]
+            # Colonnes export Ephysio Prestations — détection par nom
+            _cr = resoudre_colonnes(df_r)
+            c_date = _cr["date_facture"] or df_r.columns[1]
+            c_code = df_r.columns[2]   # Code tarifaire toujours col 2 dans Prestations
+            c_mont = _cr["chiffre"] or _cr["montant"] or df_r.columns[11]
 
             df_r[c_date] = pd.to_datetime(df_r[c_date], errors="coerce")
             df_r[c_mont] = pd.to_numeric(df_r[c_mont], errors="coerce").fillna(0)
@@ -1571,7 +1633,7 @@ elif st.session_state.page == "retrocession":
                 st.stop()
 
             # Colonne patient (col 8, index 8)
-            c_pat = df_r.columns[8]
+            c_pat = _cr["num_patient"] or _cr["patient"] or df_r.columns[8]
 
             # --- DÉTECTION PAIRES 7311/7354 (séances à domicile) ---
             # Une paire domicile = même jour + même patient + présence de 7311 ET 7354
