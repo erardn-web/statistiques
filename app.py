@@ -1246,36 +1246,22 @@ elif st.session_state.page == "medecins":
                     _df_base = tab_final[tab_final["medecin"].isin(choix)].sort_values("CA Global", ascending=False).copy()
                     _df_base = _df_base.apply(lambda c: c.round(2) if c.dtype.kind == 'f' else c)
 
-                    if annee_sur_annee:
-                        # MODE N-1 : durées identiques → CA comparables directement + delta %
-                        _df_base["Δ %"] = ((_df_base["CA 90j"] - _df_base[label_ref]) / _df_base[label_ref].replace(0, pd.NA) * 100).round(1)
-                        cols_affichage = ["medecin", "CA 90j", label_ref, "Δ %", "Tendance", "Taux 90j (CHF/j)", label_taux_ref, "CA Global"]
-                        _df_disp_med = _df_base[cols_affichage].copy()
-                        st.markdown("<small>🔵 <b>CA 90j</b> comparé au <b>CA même période N-1</b> — colonnes surlignées | Δ% = variation</small>", unsafe_allow_html=True)
-                        st.dataframe(_df_disp_med, use_container_width=True, hide_index=True, column_config={
-                            "medecin":           st.column_config.TextColumn("Médecin"),
-                            "CA 90j":            st.column_config.NumberColumn("⟵ CA 90j (CHF)", format="%.2f", help="Période récente"),
-                            label_ref:           st.column_config.NumberColumn(f"⟵ {label_ref} (CHF)", format="%.2f", help="Même période année précédente"),
-                            "Δ %":               st.column_config.NumberColumn("Δ %", format="%.1f", help="Variation en % entre les deux périodes"),
-                            "Tendance":          st.column_config.TextColumn("Tendance"),
-                            "Taux 90j (CHF/j)":  st.column_config.NumberColumn("Taux 90j (CHF/j)", format="%.2f"),
-                            label_taux_ref:      st.column_config.NumberColumn(label_taux_ref, format="%.2f"),
-                            "CA Global":         st.column_config.NumberColumn("CA Global (CHF)", format="%.2f"),
-                        })
-                    else:
-                        # MODE 365j : durées inégales → taux CHF/j indispensable pour comparer
-                        cols_affichage = ["medecin", "Taux 90j (CHF/j)", label_taux_ref, "Tendance", "CA 90j", label_ref, "CA Global"]
-                        _df_disp_med = _df_base[cols_affichage].copy()
-                        st.markdown(f"<small>🔵 <b>Taux 90j</b> comparé au <b>{label_taux_ref}</b> — colonnes surlignées (CHF/j permet de comparer des durées différentes)</small>", unsafe_allow_html=True)
-                        st.dataframe(_df_disp_med, use_container_width=True, hide_index=True, column_config={
-                            "medecin":             st.column_config.TextColumn("Médecin"),
-                            "Taux 90j (CHF/j)":   st.column_config.NumberColumn("⟵ Taux 90j (CHF/j)", format="%.2f", help="Période récente — à comparer avec la colonne suivante"),
-                            label_taux_ref:        st.column_config.NumberColumn(f"⟵ {label_taux_ref}", format="%.2f", help="Période de référence — à comparer avec la colonne précédente"),
-                            "Tendance":            st.column_config.TextColumn("Tendance"),
-                            "CA 90j":              st.column_config.NumberColumn("CA 90j (CHF)", format="%.2f"),
-                            label_ref:             st.column_config.NumberColumn(f"{label_ref} (CHF)", format="%.2f"),
-                            "CA Global":           st.column_config.NumberColumn("CA Global (CHF)", format="%.2f"),
-                        })
+                    # Les deux modes utilisent les taux CHF/j — neutralise les jours fériés et fermetures
+                    cols_affichage = ["medecin", "Taux 90j (CHF/j)", label_taux_ref, "Tendance", "CA 90j", label_ref, "CA Global"]
+                    _df_disp_med = _df_base[cols_affichage].copy()
+                    legende_med = (
+                        f"🔵 <b>Taux 90j</b> vs <b>{label_taux_ref}</b> — comparaison en CHF/j (neutralise jours fériés et fermetures)"
+                    )
+                    st.markdown(f"<small>{legende_med}</small>", unsafe_allow_html=True)
+                    st.dataframe(_df_disp_med, use_container_width=True, hide_index=True, column_config={
+                        "medecin":            st.column_config.TextColumn("Médecin"),
+                        "Taux 90j (CHF/j)":  st.column_config.NumberColumn("⟵ Taux 90j (CHF/j)", format="%.2f", help="Période récente — à comparer avec la colonne suivante"),
+                        label_taux_ref:       st.column_config.NumberColumn(f"⟵ {label_taux_ref}", format="%.2f", help="Période de référence — à comparer avec la colonne précédente"),
+                        "Tendance":           st.column_config.TextColumn("Tendance"),
+                        "CA 90j":             st.column_config.NumberColumn("CA 90j (CHF)", format="%.2f"),
+                        label_ref:            st.column_config.NumberColumn(f"{label_ref} (CHF)", format="%.2f"),
+                        "CA Global":          st.column_config.NumberColumn("CA Global (CHF)", format="%.2f"),
+                    })
 
                     _df_pdf_med = _df_disp_med.apply(lambda c: c.round(2) if c.dtype.kind == 'f' else c)
                     _pdf_buf = generer_pdf_tableau("Performance Médecins", _df_pdf_med, f"Calculé au {datetime.today().strftime('%d.%m.%Y')}")
@@ -1454,55 +1440,30 @@ elif st.session_state.page == "tarifs":
                     ca_ref_val = r[label_ref]
                     delta_pct = f"{((ca_90_val - ca_ref_val) / ca_ref_val * 100):+.1f}%" if ca_ref_val and ca_ref_val != 0 else "—"
 
-                    if annee_sur_annee_t:
-                        # MODE N-1 : CA comparables directement
-                        rows += (
-                            f'<tr>'
-                            f'{first_cell}'
-                            f'<td style="text-align:right;background:#EBF5FB;font-weight:600">{chf(r["CA 90j"])}</td>'
-                            f'<td style="text-align:right;background:#EBF5FB;font-weight:600">{chf(r[label_ref])}</td>'
-                            f'<td style="text-align:right;font-weight:600;color:{"#1a7f3c" if ca_90_val >= ca_ref_val else "#c0392b"}">{delta_pct}</td>'
-                            f'<td>{tendance_html(r["Tendance"])}</td>'
-                            f'<td style="text-align:right">{chf(r["Taux 90j (CHF/j)"])}</td>'
-                            f'<td style="text-align:right">{chf(r[label_taux_ref])}</td>'
-                            f'<td style="text-align:right">{chf(r["CA Global"])}</td>'
-                            f'</tr>'
-                        )
-                    else:
-                        # MODE 365j : taux CHF/j indispensable
-                        rows += (
-                            f'<tr>'
-                            f'{first_cell}'
-                            f'<td style="text-align:right;background:#EBF5FB;font-weight:600">{chf(r["Taux 90j (CHF/j)"])}</td>'
-                            f'<td style="text-align:right;background:#EBF5FB;font-weight:600">{chf(r[label_taux_ref])}</td>'
-                            f'<td>{tendance_html(r["Tendance"])}</td>'
-                            f'<td style="text-align:right">{chf(r["CA 90j"])}</td>'
-                            f'<td style="text-align:right">{chf(r[label_ref])}</td>'
-                            f'<td style="text-align:right">{chf(r["CA Global"])}</td>'
-                            f'</tr>'
-                        )
+                    # Les deux modes : taux CHF/j — neutralise jours fériés et fermetures
+                    rows += (
+                        f'<tr>'
+                        f'{first_cell}'
+                        f'<td style="text-align:right;background:#EBF5FB;font-weight:600">{chf(r["Taux 90j (CHF/j)"])}</td>'
+                        f'<td style="text-align:right;background:#EBF5FB;font-weight:600">{chf(r[label_taux_ref])}</td>'
+                        f'<td>{tendance_html(r["Tendance"])}</td>'
+                        f'<td style="text-align:right">{chf(r["CA 90j"])}</td>'
+                        f'<td style="text-align:right">{chf(r[label_ref])}</td>'
+                        f'<td style="text-align:right">{chf(r["CA Global"])}</td>'
+                        f'</tr>'
+                    )
 
                 first_col_header = "Profession" if view_mode == "Profession" else "Code"
                 tooltip_note = "" if view_mode == "Profession" else "<p style='font-size:0.75rem;color:#999;margin-top:4px'>ℹ️ Survolez le code pour voir le nom de la prestation</p>"
 
-                if annee_sur_annee_t:
-                    headers = (
-                        f"<th>{first_col_header}</th>"
-                        f"<th style='background:#D6EAF8'>⟵ CA 90j (CHF)</th>"
-                        f"<th style='background:#D6EAF8'>⟵ {label_ref} (CHF)</th>"
-                        f"<th>Δ %</th><th>Tendance</th>"
-                        f"<th>Taux 90j (CHF/j)</th><th>{label_taux_ref}</th><th>CA Global (CHF)</th>"
-                    )
-                    legende = "<small>🔵 <b>CA 90j</b> comparé au <b>CA même période N-1</b> — Δ% = variation directe</small>"
-                else:
-                    headers = (
-                        f"<th>{first_col_header}</th>"
-                        f"<th style='background:#D6EAF8'>⟵ Taux 90j (CHF/j)</th>"
-                        f"<th style='background:#D6EAF8'>⟵ {label_taux_ref}</th>"
-                        f"<th>Tendance</th>"
-                        f"<th>CA 90j (CHF)</th><th>{label_ref} (CHF)</th><th>CA Global (CHF)</th>"
-                    )
-                    legende = f"<small>🔵 <b>Taux 90j</b> comparé au <b>{label_taux_ref}</b> — CHF/j permet de comparer des durées inégales</small>"
+                headers = (
+                    f"<th>{first_col_header}</th>"
+                    f"<th style='background:#D6EAF8'>⟵ Taux 90j (CHF/j)</th>"
+                    f"<th style='background:#D6EAF8'>⟵ {label_taux_ref}</th>"
+                    f"<th>Tendance</th>"
+                    f"<th>CA 90j (CHF)</th><th>{label_ref} (CHF)</th><th>CA Global (CHF)</th>"
+                )
+                legende = f"<small>🔵 <b>Taux 90j</b> vs <b>{label_taux_ref}</b> — comparaison en CHF/j (neutralise jours fériés et fermetures)</small>"
 
                 html_table = (
                     "<style>"
