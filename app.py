@@ -740,58 +740,53 @@ if st.session_state.page == "accueil":
     </style>
     """, unsafe_allow_html=True)
 
-    # Création de deux colonnes principales pour séparer les types d'exports
-    col_left, col_spacer, col_right = st.columns([1, 0.1, 1])
+    # Deux colonnes : gauche = Factures, droite = Prestations
+    col_left, col_spacer, col_right = st.columns([1, 0.1, 2])
 
     # --- COLONNE GAUCHE : EXPORT FACTURES ---
     with col_left:
-        st.markdown('<div class="section-header">📂 Source : Export "FACTURES"</div>', unsafe_allow_html=True)
+        st.markdown('<div class="section-header">📂 Export "FACTURES"</div>', unsafe_allow_html=True)
         st.write("Analyses basées sur les dates d'envoi et de paiement.")
-        
-        st.write("") 
+        st.write("")
         if st.button("📊 Facturation", use_container_width=True):
             st.session_state.page = "factures"
             st.rerun()
         st.caption("📌 Délais de paiement, liquidités et retards par assureur.")
 
-        st.write("")
-        if st.button("👨‍⚕️ Médecins", use_container_width=True):
-            st.session_state.page = "medecins"
-            st.rerun()
-        st.caption("📌 CA et tendances par médecin prescripteur.")
-
     # --- COLONNE DROITE : EXPORT PRESTATIONS ---
     with col_right:
-        st.markdown('<div class="section-header" style="border-left-color: #FF9900;">📑 Source : Export "PRESTATIONS"</div>', unsafe_allow_html=True)
-        st.write("Analyses basées sur l'activité clinique et les séances.")
-
+        st.markdown('<div class="section-header" style="border-left-color: #FF9900;">📑 Export "PRESTATIONS" (onglets Factures + Prestation)</div>', unsafe_allow_html=True)
+        st.write("Analyses basées sur l'activité clinique réelle — indépendantes du comportement de facturation.")
         st.write("")
-        # On place Tarifs et Bilan côte à côte pour gagner de la place
-        c1, c2 = st.columns(2)
+        c1, c2, c3, c4, c5 = st.columns(5)
         with c1:
+            if st.button("👨‍⚕️ Médecins", use_container_width=True):
+                st.session_state.page = "medecins"
+                st.rerun()
+            st.caption("CA par médecin prescripteur")
+        with c2:
             if st.button("🏷️ Tarifs", use_container_width=True):
                 st.session_state.page = "tarifs"
                 st.rerun()
-        with c2:
+            st.caption("Revenus par code tarifaire")
+        with c3:
             if st.button("🏦 Bilan", use_container_width=True):
                 st.session_state.page = "bilan"
                 st.rerun()
-        st.caption("📌 Revenus par code tarifaire et bilan annuel par fournisseur.")
-
-        st.write("")
-        c3, c4 = st.columns(2)
-        with c3:
+            st.caption("Bilan annuel par fournisseur")
+        with c4:
             if st.button("👥 Stats Patients", use_container_width=True):
                 st.session_state.page = "stats_patients"
                 st.rerun()
-        with c4:
+            st.caption("Flux & capacité")
+        with c5:
             if st.button("🤝 Rétrocession", use_container_width=True):
                 st.session_state.page = "retrocession"
                 st.rerun()
-        st.caption("📌 Stats patients & simulation de capacité. Rétrocession thérapeute indépendant·e.")
+            st.caption("Décompte thérapeute indépendant·e")
 
     st.markdown("---")
-    st.info("💡 **Conseil :** Utilisez l'export Excel complet pour garantir la précision des calculs.")
+    st.info("💡 **Conseil :** L'export Prestations contient tous les onglets nécessaires pour les 5 modules de droite.")
 
 # ==========================================
 # 📊 MODULE FACTURES (ORIGINAL RÉPARÉ)
@@ -1039,7 +1034,9 @@ elif st.session_state.page == "medecins":
         st.rerun()
 
     st.header("👨‍⚕️ Performance Médecins")
-    uploaded_file = st.sidebar.file_uploader("Export Factures (.xlsx)", type="xlsx", key="med_up")
+    st.caption("📌 Basé sur les dates de séance réelles — indépendant du comportement de facturation.")
+    uploaded_file = st.sidebar.file_uploader("Export Prestations (.xlsx)", type="xlsx", key="med_up",
+        help="Fichier exporté depuis Ephysio contenant les onglets 'Prestation' et 'Factures'.")
 
     # --- CONFIG MÉDECINS ---
     import io as _io
@@ -1063,23 +1060,43 @@ elif st.session_state.page == "medecins":
         except Exception as e:
             st.sidebar.error(f"Erreur : {e}")
 
-    # Générer un fichier vierge dès qu'un export est chargé (affiché après le bloc principal)
     st.sidebar.markdown("---")
 
     if uploaded_file:
         try:
             @st.cache_data
-            def lire_medecins(f): return pd.read_excel(f, header=0)
-            df_brut = lire_medecins(uploaded_file)
-            valider_colonnes(df_brut, 15, "Médecins")
+            def lire_medecins_prestations(f):
+                xl = pd.ExcelFile(f)
+                # Onglet Prestation (séances)
+                ong_prest = next((s for s in xl.sheet_names if s.strip().lower() == "prestation"), None) or                             next((s for s in xl.sheet_names if "prestation" in s.lower()), xl.sheet_names[0])
+                df_prest = pd.read_excel(f, sheet_name=ong_prest, header=0)
+                df_prest.columns = [str(c).strip() for c in df_prest.columns]
+                # Onglet Factures (médecins, fournisseurs, lois)
+                ong_fact = next((s for s in xl.sheet_names if s.strip().lower() == "factures"), None) or                            next((s for s in xl.sheet_names if "facture" in s.lower()), None)
+                if ong_fact is None:
+                    raise ValueError("Onglet 'Factures' introuvable dans ce fichier.")
+                df_fact = pd.read_excel(f, sheet_name=ong_fact, header=0)
+                df_fact.columns = [str(c).strip() for c in df_fact.columns]
+                return df_prest, df_fact
 
-            # Résolution des colonnes dès le chargement
-            _cm = resoudre_colonnes(df_brut)
+            df_prest, df_fact = lire_medecins_prestations(uploaded_file)
+
+            # Résolution colonnes Factures
+            _cm = resoudre_colonnes(df_fact)
             if _cm["fournisseur"] is None:
-                df_brut["Fournisseur de prestation"] = "Cabinet"
+                df_fact["Fournisseur de prestation"] = "Cabinet"
                 _cm["fournisseur"] = "Fournisseur de prestation"
 
-            # Bouton export config vierge basé sur les noms de l'export
+            # Jointure Prestation × Factures sur numéro de facture
+            col_num_prest = df_prest.columns[0]  # "Numéro de facture"
+            col_num_fact  = df_fact.columns[0]   # "Numéro de facture"
+            cols_fact_join = [col_num_fact, _cm["medecin"], _cm["fournisseur"], _cm["loi"], _cm["tp_tg"]]
+            df_brut = df_prest.merge(
+                df_fact[cols_fact_join].drop_duplicates(subset=[col_num_fact]),
+                left_on=col_num_prest, right_on=col_num_fact, how="left"
+            )
+
+            # Bouton export config vierge basé sur les noms trouvés
             noms_bruts = sorted(df_brut[_cm["medecin"]].dropna().astype(str).str.strip().unique().tolist())
             df_export_cfg = pd.DataFrame({
                 "Nom canonique": noms_bruts,
@@ -1106,6 +1123,10 @@ elif st.session_state.page == "medecins":
             df_m_init = df_brut[df_brut[_cm["tp_tg"]].astype(str).str.upper() != "TG"].copy()
             df_m_init = df_m_init[df_m_init[_cm["fournisseur"]].isin(sel_fourn_med)]
 
+            # Colonnes Prestation pour date et montant (onglet Prestation)
+            col_date_prest   = df_prest.columns[1]   # "Date" (date séance)
+            col_chiffre_prest = df_prest.columns[11]  # "Chiffre"
+
             def moteur_fusion_securise(df):
                 noms_originaux = df[_cm["medecin"]].dropna().unique()
                 mapping = {}
@@ -1124,11 +1145,12 @@ elif st.session_state.page == "medecins":
 
             regroupements = moteur_fusion_securise(df_m_init)
             df_m_init[_cm["medecin"]] = df_m_init[_cm["medecin"]].replace(regroupements)
-            
+
             ajd = pd.Timestamp(datetime.today().date())
             df_m_init["medecin"] = df_m_init[_cm["medecin"]].astype(str).str.strip()
-            df_m_init["ca"] = pd.to_numeric(df_m_init[_cm["chiffre"]], errors="coerce").fillna(0)
-            df_m_init["date_f"] = df_m_init[_cm["date_facture"]].apply(convertir_date)
+            # Utiliser date et montant de l'onglet Prestation (date de séance réelle)
+            df_m_init["ca"] = pd.to_numeric(df_m_init[col_chiffre_prest], errors="coerce").fillna(0)
+            df_m_init["date_f"] = df_m_init[col_date_prest].apply(convertir_date)
             df_m = df_m_init[(df_m_init["ca"] > 0) & (df_m_init["date_f"].notna()) & (df_m_init["date_f"] <= ajd) & (df_m_init["medecin"].notna())].copy()
             # Appliquer le mapping de la config cabinet (variantes → nom canonique)
             if st.session_state.config_medecins:
