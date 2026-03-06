@@ -1147,11 +1147,22 @@ elif st.session_state.page == "medecins":
             df_m_init[_cm["medecin"]] = df_m_init[_cm["medecin"]].replace(regroupements)
 
             ajd = pd.Timestamp(datetime.today().date())
+            # Fin du mois précédent — on exclut le mois en cours (incomplet)
+            fin_mois_precedent = (ajd.replace(day=1) - pd.DateOffset(days=1))
             df_m_init["medecin"] = df_m_init[_cm["medecin"]].astype(str).str.strip()
             # Utiliser date et montant de l'onglet Prestation (date de séance réelle)
             df_m_init["ca"] = pd.to_numeric(df_m_init[col_chiffre_prest], errors="coerce").fillna(0)
             df_m_init["date_f"] = df_m_init[col_date_prest].apply(convertir_date)
-            df_m = df_m_init[(df_m_init["ca"] > 0) & (df_m_init["date_f"].notna()) & (df_m_init["date_f"] <= ajd) & (df_m_init["medecin"].notna())].copy()
+            # Pour les calculs de tendance (taux CHF/j) : jusqu'à aujourd'hui
+            df_m = df_m_init[
+                (df_m_init["ca"] > 0) &
+                (df_m_init["date_f"].notna()) &
+                (df_m_init["date_f"] <= ajd) &
+                (df_m_init["medecin"].notna())
+            ].copy()
+            # Pour le graphique : mois en cours exclu (barre incomplète visuellement)
+            df_m_graph = df_m[df_m["date_f"] <= fin_mois_precedent].copy()
+            st.caption(f"📅 Graphique jusqu'au {fin_mois_precedent.strftime('%d.%m.%Y')} — tendances calculées jusqu'à aujourd'hui.")
             # Appliquer le mapping de la config cabinet (variantes → nom canonique)
             if st.session_state.config_medecins:
                 df_m["medecin"] = df_m["medecin"].replace(st.session_state.config_medecins)
@@ -1210,7 +1221,7 @@ elif st.session_state.page == "medecins":
                 choix = st.multiselect("Sélection :", options=sorted(tab_final["medecin"].unique()), default=def_sel)
 
                 if choix:
-                    df_p = df_m[df_m["medecin"].isin(choix)].copy()
+                    df_p = df_m_graph[df_m_graph["medecin"].isin(choix)].copy()
                     df_p["M_Date"] = df_p["date_f"].dt.to_period("M").dt.to_timestamp()
                     df_p = df_p.groupby(["M_Date", "medecin"])["ca"].sum().reset_index()
                     base = alt.Chart(df_p).encode(
