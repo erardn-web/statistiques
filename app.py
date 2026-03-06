@@ -715,12 +715,11 @@ if st.session_state.page == "accueil":
     .accueil-hero {
         background: linear-gradient(135deg, #0f2942 0%, #1a4a7a 60%, #1e6091 100%);
         border-radius: 16px;
-        padding: 36px 40px 30px 40px;
+        padding: 20px 28px;
         margin-bottom: 32px;
         color: white;
     }
-    .accueil-hero h1 { font-size: 2rem; font-weight: 700; margin: 0 0 6px 0; letter-spacing: -0.5px; }
-    .accueil-hero p  { font-size: 1rem; opacity: 0.75; margin: 0; }
+    .accueil-hero h1 { font-size: 1.5rem; font-weight: 700; margin: 0; letter-spacing: -0.5px; }
 
     .section-label {
         font-size: 0.7rem;
@@ -769,12 +768,11 @@ if st.session_state.page == "accueil":
     st.markdown("""
     <div class="accueil-hero">
         <h1>🏥 Analyse Ephysio</h1>
-        <p>Tableau de bord analytique pour cabinets de physiothérapie</p>
     </div>
     """, unsafe_allow_html=True)
 
     # ── SECTION FACTURES (1 module) ──────────────────────────────
-    st.markdown('<div class="section-label">📂 Export Factures — délais & liquidités</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-label">📂 Export Factures</div>', unsafe_allow_html=True)
     col_f, _ = st.columns([1, 2])
     with col_f:
         st.markdown('<div class="btn-factures">', unsafe_allow_html=True)
@@ -786,7 +784,7 @@ if st.session_state.page == "accueil":
     st.markdown("<br>", unsafe_allow_html=True)
 
     # ── SECTION PRESTATIONS (5 modules, 2 rangées) ───────────────
-    st.markdown('<div class="section-label section-label-orange">📑 Export Prestations — activité clinique réelle (onglets Factures + Prestation)</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-label section-label-orange">📑 Export Prestations</div>', unsafe_allow_html=True)
 
     # Rangée 1 : Médecins · Tarifs · Bilan
     c1, c2, c3 = st.columns(3)
@@ -817,7 +815,6 @@ if st.session_state.page == "accueil":
             st.rerun()
 
     st.markdown("<br>", unsafe_allow_html=True)
-    st.caption("💡 L'export Prestations contient tous les onglets nécessaires pour les 5 modules ci-dessus.")
 
 # ==========================================
 # 📊 MODULE FACTURES (ORIGINAL RÉPARÉ)
