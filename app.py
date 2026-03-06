@@ -708,85 +708,115 @@ if 'config_medecins' not in st.session_state:
 # 🏠 PAGE D'ACCUEIL (STRUCTURÉE PAR SOURCE DE DONNÉES)
 # ==========================================
 if st.session_state.page == "accueil":
-    st.title("🏥 Assistant d'Analyse Ephysio")
 
-    st.markdown("---")
-    
-    # Style CSS pour séparer visuellement     # Style CSS pour séparer visuellement les deux zones
     st.markdown("""
     <style>
+    /* Page accueil */
+    .accueil-hero {
+        background: linear-gradient(135deg, #0f2942 0%, #1a4a7a 60%, #1e6091 100%);
+        border-radius: 16px;
+        padding: 36px 40px 30px 40px;
+        margin-bottom: 32px;
+        color: white;
+    }
+    .accueil-hero h1 { font-size: 2rem; font-weight: 700; margin: 0 0 6px 0; letter-spacing: -0.5px; }
+    .accueil-hero p  { font-size: 1rem; opacity: 0.75; margin: 0; }
+
+    .section-label {
+        font-size: 0.7rem;
+        font-weight: 700;
+        letter-spacing: 1.5px;
+        text-transform: uppercase;
+        color: #888;
+        margin-bottom: 10px;
+        padding-left: 2px;
+    }
+    .section-label-orange { color: #c97a00; }
+
+    /* Boutons modules */
     div.stButton > button {
-        height: 100px;
-        border-radius: 12px;
-        border: 1px solid #e0e0e0;
-        background-color: #ffffff;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.03);
-        transition: all 0.2s ease-in-out;
+        background: #ffffff;
+        border: 1.5px solid #e8edf2;
+        border-radius: 10px;
+        padding: 14px 10px;
+        font-size: 0.88rem;
+        font-weight: 600;
+        color: #1a3a5c;
+        height: auto !important;
+        min-height: 72px;
+        line-height: 1.35;
+        transition: all 0.15s ease;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+        white-space: normal !important;
+        word-wrap: break-word;
     }
     div.stButton > button:hover {
-        border-color: #00CCFF;
-        transform: translateY(-2px);
-        box-shadow: 0 5px 15px rgba(0,0,0,0.08);
+        border-color: #1a6b9a;
+        background: #f0f7ff;
+        transform: translateY(-1px);
+        box-shadow: 0 4px 12px rgba(26,107,154,0.15);
     }
-    .section-header {
-        padding: 12px;
-        border-radius: 8px;
-        background-color: #f8f9fa;
-        border-left: 5px solid #00CCFF;
-        margin-bottom: 25px;
-        font-weight: bold;
-        color: #31333F;
+    .btn-factures div.stButton > button {
+        border-left: 4px solid #1a6b9a;
+        min-height: 110px;
     }
+    .btn-factures div.stButton > button:hover { border-left-color: #1a6b9a; }
     </style>
     """, unsafe_allow_html=True)
 
-    # Deux colonnes : gauche = Factures, droite = Prestations
-    col_left, col_spacer, col_right = st.columns([1, 0.1, 2])
+    # Hero header
+    st.markdown("""
+    <div class="accueil-hero">
+        <h1>🏥 Analyse Ephysio</h1>
+        <p>Tableau de bord analytique pour cabinets de physiothérapie</p>
+    </div>
+    """, unsafe_allow_html=True)
 
-    # --- COLONNE GAUCHE : EXPORT FACTURES ---
-    with col_left:
-        st.markdown('<div class="section-header">📂 Export "FACTURES"</div>', unsafe_allow_html=True)
-        st.write("Analyses basées sur les dates d'envoi et de paiement.")
-        st.write("")
-        if st.button("📊 Facturation", use_container_width=True):
+    # ── SECTION FACTURES (1 module) ──────────────────────────────
+    st.markdown('<div class="section-label">📂 Export Factures — délais & liquidités</div>', unsafe_allow_html=True)
+    col_f, _ = st.columns([1, 2])
+    with col_f:
+        st.markdown('<div class="btn-factures">', unsafe_allow_html=True)
+        if st.button("📊 Facturation — Délais · Liquidités · Retards", use_container_width=True):
             st.session_state.page = "factures"
             st.rerun()
-        st.caption("📌 Délais de paiement, liquidités et retards par assureur.")
+        st.markdown('</div>', unsafe_allow_html=True)
 
-    # --- COLONNE DROITE : EXPORT PRESTATIONS ---
-    with col_right:
-        st.markdown('<div class="section-header" style="border-left-color: #FF9900;">📑 Export "PRESTATIONS" (onglets Factures + Prestation)</div>', unsafe_allow_html=True)
-        st.write("Analyses basées sur l'activité clinique réelle — indépendantes du comportement de facturation.")
-        st.write("")
-        c1, c2, c3, c4, c5 = st.columns(5)
-        with c1:
-            if st.button("👨‍⚕️ Médecins", use_container_width=True):
-                st.session_state.page = "medecins"
-                st.rerun()
-            st.caption("CA par médecin prescripteur")
-        with c2:
-            if st.button("🏷️ Tarifs", use_container_width=True):
-                st.session_state.page = "tarifs"
-                st.rerun()
-            st.caption("Revenus par code tarifaire")
-        with c3:
-            if st.button("🏦 Bilan", use_container_width=True):
-                st.session_state.page = "bilan"
-                st.rerun()
-            st.caption("Bilan annuel par fournisseur")
-        with c4:
-            if st.button("👥 Stats Patients", use_container_width=True):
-                st.session_state.page = "stats_patients"
-                st.rerun()
-            st.caption("Flux & capacité")
-        with c5:
-            if st.button("🤝 Rétrocession", use_container_width=True):
-                st.session_state.page = "retrocession"
-                st.rerun()
-            st.caption("Décompte thérapeute indépendant·e")
+    st.markdown("<br>", unsafe_allow_html=True)
 
-    st.markdown("---")
-    st.info("💡 **Conseil :** L'export Prestations contient tous les onglets nécessaires pour les 5 modules de droite.")
+    # ── SECTION PRESTATIONS (5 modules, 2 rangées) ───────────────
+    st.markdown('<div class="section-label section-label-orange">📑 Export Prestations — activité clinique réelle (onglets Factures + Prestation)</div>', unsafe_allow_html=True)
+
+    # Rangée 1 : Médecins · Tarifs · Bilan
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        if st.button("👨‍⚕️ Médecins — CA & tendances par prescripteur", use_container_width=True):
+            st.session_state.page = "medecins"
+            st.rerun()
+    with c2:
+        if st.button("🏷️ Tarifs — Revenus & tendances par code", use_container_width=True):
+            st.session_state.page = "tarifs"
+            st.rerun()
+    with c3:
+        if st.button("🏦 Bilan — CA annuel & impayés par fournisseur", use_container_width=True):
+            st.session_state.page = "bilan"
+            st.rerun()
+
+    st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
+
+    # Rangée 2 : Stats Patients · Rétrocession
+    c4, c5, _ = st.columns(3)
+    with c4:
+        if st.button("👥 Stats Patients — Flux & capacité cabinet", use_container_width=True):
+            st.session_state.page = "stats_patients"
+            st.rerun()
+    with c5:
+        if st.button("🤝 Rétrocession — Décompte thérapeute indép.", use_container_width=True):
+            st.session_state.page = "retrocession"
+            st.rerun()
+
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.caption("💡 L'export Prestations contient tous les onglets nécessaires pour les 5 modules ci-dessus.")
 
 # ==========================================
 # 📊 MODULE FACTURES (ORIGINAL RÉPARÉ)
