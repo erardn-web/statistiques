@@ -738,12 +738,13 @@ if st.session_state.page == "accueil":
         background: #ffffff;
         border: 1.5px solid #e8edf2;
         border-radius: 10px;
-        padding: 14px 10px;
+        padding: 10px;
         font-size: 0.88rem;
         font-weight: 600;
         color: #1a3a5c;
-        height: auto !important;
-        min-height: 72px;
+        height: 120px !important;
+        width: 100% !important;
+        aspect-ratio: 1 / 1;
         line-height: 1.35;
         transition: all 0.15s ease;
         box-shadow: 0 1px 3px rgba(0,0,0,0.06);
@@ -758,7 +759,7 @@ if st.session_state.page == "accueil":
     }
     .btn-factures div.stButton > button {
         border-left: 4px solid #1a6b9a;
-        min-height: 110px;
+        height: 120px !important;
     }
     .btn-factures div.stButton > button:hover { border-left-color: #1a6b9a; }
     </style>
