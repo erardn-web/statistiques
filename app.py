@@ -763,17 +763,17 @@ if st.session_state.page == "accueil":
     .btn-factures div.stButton > button:hover { border-left-color: #B5546A; }
 
     /* Sous-titres des modules : masqués, révélés au survol de la colonne */
-    [data-testid="column"] div[data-testid="stCaptionContainer"] {
+    .module-subtitle {
         opacity: 0;
-        max-height: 0;
-        overflow: hidden;
-        transition: opacity 0.2s ease, max-height 0.2s ease;
-        margin-top: 0;
-    }
-    [data-testid="column"]:hover div[data-testid="stCaptionContainer"] {
-        opacity: 1;
-        max-height: 40px;
+        font-size: 0.78rem;
+        color: #B5546A;
+        text-align: center;
         margin-top: 4px;
+        transition: opacity 0.2s ease;
+        min-height: 18px;
+    }
+    [data-testid="column"]:hover .module-subtitle {
+        opacity: 1;
     }
     </style>
     """, unsafe_allow_html=True)
@@ -796,17 +796,17 @@ if st.session_state.page == "accueil":
         if st.button("👨‍⚕️ Médecins", use_container_width=True):
             st.session_state.page = "medecins"
             st.rerun()
-        st.caption("CA & tendances par prescripteur")
+        st.markdown('<div class="module-subtitle">CA & tendances par prescripteur</div>', unsafe_allow_html=True)
     with c2:
         if st.button("🏷️ Tarifs", use_container_width=True):
             st.session_state.page = "tarifs"
             st.rerun()
-        st.caption("Revenus & tendances par code")
+        st.markdown('<div class="module-subtitle">Revenus & tendances par code</div>', unsafe_allow_html=True)
     with c3:
         if st.button("🏦 Bilan", use_container_width=True):
             st.session_state.page = "bilan"
             st.rerun()
-        st.caption("CA annuel & impayés par fournisseur")
+        st.markdown('<div class="module-subtitle">CA annuel & impayés par fournisseur</div>', unsafe_allow_html=True)
 
     st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
 
@@ -816,12 +816,12 @@ if st.session_state.page == "accueil":
         if st.button("👥 Stats Patients", use_container_width=True):
             st.session_state.page = "stats_patients"
             st.rerun()
-        st.caption("Flux & capacité cabinet")
+        st.markdown('<div class="module-subtitle">Flux & capacité cabinet</div>', unsafe_allow_html=True)
     with c5:
         if st.button("🤝 Rétrocession", use_container_width=True):
             st.session_state.page = "retrocession"
             st.rerun()
-        st.caption("Décompte thérapeute indép.")
+        st.markdown('<div class="module-subtitle">Décompte thérapeute indép.</div>', unsafe_allow_html=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
 
@@ -833,7 +833,7 @@ if st.session_state.page == "accueil":
         if st.button("📊 Facturation", use_container_width=True):
             st.session_state.page = "factures"
             st.rerun()
-        st.caption("Délais · Liquidités · Retards par assureur")
+        st.markdown('<div class="module-subtitle">Délais · Liquidités · Retards par assureur</div>', unsafe_allow_html=True)
         st.markdown('</div>', unsafe_allow_html=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
