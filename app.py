@@ -1120,6 +1120,7 @@ elif st.session_state.page == "medecins":
             fourn_med = sorted(df_brut[_cm["fournisseur"]].dropna().unique().tolist())
             sel_fourn_med = st.sidebar.multiselect("Fournisseurs :", fourn_med, default=fourn_med)
             seuil_jour_med = st.sidebar.number_input("Montant min. pour jour ouvert (CHF) :", min_value=0, max_value=500, value=50, step=10, key="seuil_med")
+            exclure_mois_med = st.sidebar.toggle("Exclure le mois en cours", value=True, key="excl_mois_med")
             df_m_init = df_brut[df_brut[_cm["tp_tg"]].astype(str).str.upper() != "TG"].copy()
             df_m_init = df_m_init[df_m_init[_cm["fournisseur"]].isin(sel_fourn_med)]
 
@@ -1160,9 +1161,13 @@ elif st.session_state.page == "medecins":
                 (df_m_init["date_f"] <= ajd) &
                 (df_m_init["medecin"].notna())
             ].copy()
-            # Pour le graphique : mois en cours exclu (barre incomplète visuellement)
-            df_m_graph = df_m[df_m["date_f"] <= fin_mois_precedent].copy()
-            st.caption(f"📅 Graphique jusqu'au {fin_mois_precedent.strftime('%d.%m.%Y')} — tendances calculées jusqu'à aujourd'hui.")
+            # Pour le graphique : optionnellement exclure le mois en cours
+            if exclure_mois_med:
+                df_m_graph = df_m[df_m["date_f"] <= fin_mois_precedent].copy()
+                st.caption(f"📅 Graphique jusqu'au {fin_mois_precedent.strftime('%d.%m.%Y')} — tendances calculées jusqu'à aujourd'hui.")
+            else:
+                df_m_graph = df_m.copy()
+                st.caption(f"📅 Graphique jusqu'au {ajd.strftime('%d.%m.%Y')} — mois en cours inclus.")
             # Appliquer le mapping de la config cabinet (variantes → nom canonique)
             if st.session_state.config_medecins:
                 df_m["medecin"] = df_m["medecin"].replace(st.session_state.config_medecins)
