@@ -739,13 +739,12 @@ if st.session_state.page == "accueil":
         border: 1.5px solid #e8edf2;
         border-radius: 10px;
         padding: 10px;
-        font-size: 0.88rem;
-        font-weight: 600;
+        font-size: 1.1rem;
+        font-weight: 700;
         color: #6D2B3D;
         height: 120px !important;
         width: 100% !important;
-        aspect-ratio: 1 / 1;
-        line-height: 1.35;
+        line-height: 1.3;
         transition: all 0.15s ease;
         box-shadow: 0 1px 3px rgba(0,0,0,0.06);
         white-space: normal !important;
@@ -762,6 +761,20 @@ if st.session_state.page == "accueil":
         height: 120px !important;
     }
     .btn-factures div.stButton > button:hover { border-left-color: #B5546A; }
+
+    /* Sous-titres des modules : masqués, révélés au survol de la colonne */
+    [data-testid="column"] div[data-testid="stCaptionContainer"] {
+        opacity: 0;
+        max-height: 0;
+        overflow: hidden;
+        transition: opacity 0.2s ease, max-height 0.2s ease;
+        margin-top: 0;
+    }
+    [data-testid="column"]:hover div[data-testid="stCaptionContainer"] {
+        opacity: 1;
+        max-height: 40px;
+        margin-top: 4px;
+    }
     </style>
     """, unsafe_allow_html=True)
 
@@ -780,30 +793,35 @@ if st.session_state.page == "accueil":
     # Rangée 1 : Médecins · Tarifs · Bilan
     c1, c2, c3 = st.columns(3)
     with c1:
-        if st.button("👨‍⚕️ Médecins — CA & tendances par prescripteur", use_container_width=True):
+        if st.button("👨‍⚕️ Médecins", use_container_width=True):
             st.session_state.page = "medecins"
             st.rerun()
+        st.caption("CA & tendances par prescripteur")
     with c2:
-        if st.button("🏷️ Tarifs — Revenus & tendances par code", use_container_width=True):
+        if st.button("🏷️ Tarifs", use_container_width=True):
             st.session_state.page = "tarifs"
             st.rerun()
+        st.caption("Revenus & tendances par code")
     with c3:
-        if st.button("🏦 Bilan — CA annuel & impayés par fournisseur", use_container_width=True):
+        if st.button("🏦 Bilan", use_container_width=True):
             st.session_state.page = "bilan"
             st.rerun()
+        st.caption("CA annuel & impayés par fournisseur")
 
     st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
 
     # Rangée 2 : Stats Patients · Rétrocession
     c4, c5, _ = st.columns(3)
     with c4:
-        if st.button("👥 Stats Patients — Flux & capacité cabinet", use_container_width=True):
+        if st.button("👥 Stats Patients", use_container_width=True):
             st.session_state.page = "stats_patients"
             st.rerun()
+        st.caption("Flux & capacité cabinet")
     with c5:
-        if st.button("🤝 Rétrocession — Décompte thérapeute indép.", use_container_width=True):
+        if st.button("🤝 Rétrocession", use_container_width=True):
             st.session_state.page = "retrocession"
             st.rerun()
+        st.caption("Décompte thérapeute indép.")
 
     st.markdown("<br>", unsafe_allow_html=True)
 
@@ -812,9 +830,10 @@ if st.session_state.page == "accueil":
     col_f, _ = st.columns([1, 2])
     with col_f:
         st.markdown('<div class="btn-factures">', unsafe_allow_html=True)
-        if st.button("📊 Facturation — Délais · Liquidités · Retards", use_container_width=True):
+        if st.button("📊 Facturation", use_container_width=True):
             st.session_state.page = "factures"
             st.rerun()
+        st.caption("Délais · Liquidités · Retards par assureur")
         st.markdown('</div>', unsafe_allow_html=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
