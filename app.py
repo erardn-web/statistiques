@@ -1073,6 +1073,12 @@ elif st.session_state.page == "medecins":
             df_brut = lire_medecins(uploaded_file)
             valider_colonnes(df_brut, 15, "Médecins")
 
+            # Résolution des colonnes dès le chargement
+            _cm = resoudre_colonnes(df_brut)
+            if _cm["fournisseur"] is None:
+                df_brut["Fournisseur de prestation"] = "Cabinet"
+                _cm["fournisseur"] = "Fournisseur de prestation"
+
             # Bouton export config vierge basé sur les noms de l'export
             noms_bruts = sorted(df_brut[_cm["medecin"]].dropna().astype(str).str.strip().unique().tolist())
             df_export_cfg = pd.DataFrame({
@@ -1094,10 +1100,6 @@ elif st.session_state.page == "medecins":
             )
 
             st.sidebar.header("🔍 Filtres")
-            _cm = resoudre_colonnes(df_brut)
-            if _cm["fournisseur"] is None:
-                df_brut["Fournisseur de prestation"] = "Cabinet"
-                _cm["fournisseur"] = "Fournisseur de prestation"
             fourn_med = sorted(df_brut[_cm["fournisseur"]].dropna().unique().tolist())
             sel_fourn_med = st.sidebar.multiselect("Fournisseurs :", fourn_med, default=fourn_med)
             seuil_jour_med = st.sidebar.number_input("Montant min. pour jour ouvert (CHF) :", min_value=0, max_value=500, value=50, step=10, key="seuil_med")
