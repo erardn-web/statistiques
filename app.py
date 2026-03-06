@@ -762,7 +762,7 @@ if st.session_state.page == "accueil":
     }
     .btn-factures div.stButton > button:hover { border-left-color: #B5546A; }
 
-    /* Sous-titres des modules : masqués, révélés au survol de la colonne */
+    /* Sous-titres des modules */
     .module-subtitle {
         opacity: 0;
         font-size: 0.78rem;
@@ -771,11 +771,37 @@ if st.session_state.page == "accueil":
         margin-top: 4px;
         transition: opacity 0.2s ease;
         min-height: 18px;
-    }
-    [data-testid="column"]:hover .module-subtitle {
-        opacity: 1;
+        pointer-events: none;
     }
     </style>
+    """, unsafe_allow_html=True)
+
+    # JS hover sur colonnes → révèle sous-titres
+    st.markdown("""
+    <script>
+    (function() {
+        function attachHover() {
+            const cols = document.querySelectorAll('[data-testid="column"]');
+            cols.forEach(col => {
+                if (col._hoverAttached) return;
+                col._hoverAttached = true;
+                col.addEventListener('mouseenter', () => {
+                    const sub = col.querySelector('.module-subtitle');
+                    if (sub) sub.style.opacity = '1';
+                });
+                col.addEventListener('mouseleave', () => {
+                    const sub = col.querySelector('.module-subtitle');
+                    if (sub) sub.style.opacity = '0';
+                });
+            });
+        }
+        // Réessaie jusqu'à ce que les colonnes soient dans le DOM
+        const interval = setInterval(() => {
+            const cols = document.querySelectorAll('[data-testid="column"]');
+            if (cols.length > 0) { attachHover(); clearInterval(interval); }
+        }, 100);
+    })();
+    </script>
     """, unsafe_allow_html=True)
 
     # Hero header
