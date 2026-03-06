@@ -39,6 +39,20 @@ def chf_int(valeur):
     except:
         return str(valeur)
 
+def nettoyer_code_tarif(val):
+    """Convertit un code tarifaire lu comme float en string propre.
+    7311.0 → '7311' | 25.11 → '25.110' | 7301.0 → '7301' | déjà string → inchangé"""
+    s = str(val).strip()
+    # Si c'est un float style "7311.0" → supprimer le .0
+    if s.endswith('.0') and s[:-2].isdigit():
+        return s[:-2]
+    # Si c'est "25.11" → pad à 3 décimales → "25.110"
+    if '.' in s:
+        entier, dec = s.split('.', 1)
+        if entier.isdigit() and dec.isdigit() and len(entier) <= 3:
+            return f"{entier}.{dec.ljust(3, '0')}"
+    return s
+
 def resoudre_colonnes(df):
     """Détecte les colonnes d'un export Factures Ephysio par leur nom.
     Compatible export mono-thérapeute (20 col) et multi-thérapeutes (23 col).
@@ -330,6 +344,8 @@ def render_stats_patients():
             ong = next((s for s in onglets if s.strip().lower() == 'prestation'), None) or                   next((s for s in onglets if 'prestation' in s.lower()), onglets[0])
             df = pd.read_excel(f, sheet_name=ong)
             df.columns = [str(c).strip() for c in df.columns]
+            col_code = df.columns[2]
+            df[col_code] = df[col_code].apply(nettoyer_code_tarif)
             return df
 
         @st.cache_data
@@ -1215,6 +1231,7 @@ elif st.session_state.page == "tarifs":
             ong_p = next((s for s in pd.ExcelFile(uploaded_file).sheet_names if 'Prestation' in s or 'prestation' in s.lower()), 'Prestation')
             df = pd.read_excel(uploaded_file, sheet_name=ong_p)
             nom_col_code = df.columns[2]   # C (Tarif)
+            df[nom_col_code] = df[nom_col_code].apply(nettoyer_code_tarif)
             nom_col_nom  = df.columns[3]   # D (Nom de la prestation)
             nom_col_somme = df.columns[11] # L (Montant)
             date_cols = [c for c in df.columns if 'Date' in str(c)]
@@ -1602,7 +1619,7 @@ elif st.session_state.page == "retrocession":
 
             df_r[c_date] = pd.to_datetime(df_r[c_date], errors="coerce")
             df_r[c_mont] = pd.to_numeric(df_r[c_mont], errors="coerce").fillna(0)
-            df_r[c_code] = df_r[c_code].astype(str).str.strip()
+            df_r[c_code] = df_r[c_code].apply(nettoyer_code_tarif)
 
             # Garder uniquement les lignes avec montant positif
             df_r = df_r[(df_r[c_mont] > 0) & df_r[c_date].notna()].copy()
