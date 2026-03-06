@@ -1247,19 +1247,19 @@ elif st.session_state.page == "medecins":
                     _df_base = _df_base.apply(lambda c: c.round(2) if c.dtype.kind == 'f' else c)
 
                     # Les deux modes utilisent les taux CHF/j — neutralise les jours fériés et fermetures
-                    cols_affichage = ["medecin", "Taux 90j (CHF/j)", label_taux_ref, "Tendance", "CA 90j", label_ref, "CA Global"]
+                    cols_affichage = ["medecin", label_taux_ref, "Taux 90j (CHF/j)", "Tendance", label_ref, "CA 90j", "CA Global"]
                     _df_disp_med = _df_base[cols_affichage].copy()
                     legende_med = (
-                        f"🔵 <b>Taux 90j</b> vs <b>{label_taux_ref}</b> — comparaison en CHF/j (neutralise jours fériés et fermetures)"
+                        f"🔵 <b>{label_taux_ref}</b> vs <b>Taux 90j</b> — comparaison en CHF/j (neutralise jours fériés et fermetures)"
                     )
                     st.markdown(f"<small>{legende_med}</small>", unsafe_allow_html=True)
                     st.dataframe(_df_disp_med, use_container_width=True, hide_index=True, column_config={
                         "medecin":            st.column_config.TextColumn("Médecin"),
-                        "Taux 90j (CHF/j)":  st.column_config.NumberColumn("⟵ Taux 90j (CHF/j)", format="%.2f", help="Période récente — à comparer avec la colonne suivante"),
-                        label_taux_ref:       st.column_config.NumberColumn(f"⟵ {label_taux_ref}", format="%.2f", help="Période de référence — à comparer avec la colonne précédente"),
+                        label_taux_ref:       st.column_config.NumberColumn(f"⟵ {label_taux_ref}", format="%.2f", help="Période de référence"),
+                        "Taux 90j (CHF/j)":  st.column_config.NumberColumn("⟵ Taux 90j (CHF/j)", format="%.2f", help="Période récente — à comparer avec la colonne précédente"),
                         "Tendance":           st.column_config.TextColumn("Tendance"),
-                        "CA 90j":             st.column_config.NumberColumn("CA 90j (CHF)", format="%.2f"),
                         label_ref:            st.column_config.NumberColumn(f"{label_ref} (CHF)", format="%.2f"),
+                        "CA 90j":             st.column_config.NumberColumn("CA 90j (CHF)", format="%.2f"),
                         "CA Global":          st.column_config.NumberColumn("CA Global (CHF)", format="%.2f"),
                     })
 
@@ -1444,11 +1444,11 @@ elif st.session_state.page == "tarifs":
                     rows += (
                         f'<tr>'
                         f'{first_cell}'
-                        f'<td style="text-align:right;background:#EBF5FB;font-weight:600">{chf(r["Taux 90j (CHF/j)"])}</td>'
                         f'<td style="text-align:right;background:#EBF5FB;font-weight:600">{chf(r[label_taux_ref])}</td>'
+                        f'<td style="text-align:right;background:#EBF5FB;font-weight:600">{chf(r["Taux 90j (CHF/j)"])}</td>'
                         f'<td>{tendance_html(r["Tendance"])}</td>'
-                        f'<td style="text-align:right">{chf(r["CA 90j"])}</td>'
                         f'<td style="text-align:right">{chf(r[label_ref])}</td>'
+                        f'<td style="text-align:right">{chf(r["CA 90j"])}</td>'
                         f'<td style="text-align:right">{chf(r["CA Global"])}</td>'
                         f'</tr>'
                     )
@@ -1458,12 +1458,12 @@ elif st.session_state.page == "tarifs":
 
                 headers = (
                     f"<th>{first_col_header}</th>"
-                    f"<th style='background:#D6EAF8'>⟵ Taux 90j (CHF/j)</th>"
                     f"<th style='background:#D6EAF8'>⟵ {label_taux_ref}</th>"
+                    f"<th style='background:#D6EAF8'>⟵ Taux 90j (CHF/j)</th>"
                     f"<th>Tendance</th>"
-                    f"<th>CA 90j (CHF)</th><th>{label_ref} (CHF)</th><th>CA Global (CHF)</th>"
+                    f"<th>{label_ref} (CHF)</th><th>CA 90j (CHF)</th><th>CA Global (CHF)</th>"
                 )
-                legende = f"<small>🔵 <b>Taux 90j</b> vs <b>{label_taux_ref}</b> — comparaison en CHF/j (neutralise jours fériés et fermetures)</small>"
+                legende = f"<small>🔵 <b>{label_taux_ref}</b> vs <b>Taux 90j</b> — comparaison en CHF/j (neutralise jours fériés et fermetures)</small>"
 
                 html_table = (
                     "<style>"
