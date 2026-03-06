@@ -1150,7 +1150,7 @@ elif st.session_state.page == "medecins":
             ajd = pd.Timestamp(datetime.today().date())
             # Fin du mois précédent — on exclut le mois en cours (incomplet)
             fin_mois_precedent = (ajd.replace(day=1) - pd.DateOffset(days=1))
-            df_m_init["medecin"] = df_m_init[_cm["medecin"]].astype(str).str.strip()
+            df_m_init["medecin"] = df_m_init[_cm["medecin"]].fillna("Sans médecin").astype(str).str.strip()
             # Utiliser date et montant de l'onglet Prestation (date de séance réelle)
             df_m_init["ca"] = pd.to_numeric(df_m_init[col_chiffre_prest], errors="coerce").fillna(0)
             df_m_init["date_f"] = df_m_init[col_date_prest].apply(convertir_date)
@@ -1158,8 +1158,7 @@ elif st.session_state.page == "medecins":
             df_m = df_m_init[
                 (df_m_init["ca"] > 0) &
                 (df_m_init["date_f"].notna()) &
-                (df_m_init["date_f"] <= ajd) &
-                (df_m_init["medecin"].notna())
+                (df_m_init["date_f"] <= ajd)
             ].copy()
             # Pour le graphique : optionnellement exclure le mois en cours
             if exclure_mois_med:
