@@ -860,10 +860,7 @@ elif st.session_state.page == "factures":
             sel_lois = st.sidebar.multiselect("Types de Loi :", options=sorted(lois), default=lois)
             regrouper_assureurs = st.sidebar.checkbox("Regrouper par groupe d'assureurs", value=False,
                 help="Fusionne les assureurs appartenant au même groupe (ex. Le Groupe Mutuel + Philos → Groupe Mutuel)")
-            st.sidebar.header("📊 3. Options Délais")
-            show_med = st.sidebar.checkbox("Afficher la Médiane", value=True)
-            show_std = st.sidebar.checkbox("Afficher l'Écart-type", value=True)
-            st.sidebar.header("📅 4. Périodes & Simulation")
+            st.sidebar.header("📅 3. Périodes & Simulation")
             options_p = {"Global": None, "6 mois": 6, "4 mois": 4, "3 mois": 3, "2 mois": 2, "1 mois": 1}
             periods_sel = st.sidebar.multiselect("Analyser les périodes :", list(options_p.keys()), default=["Global", "4 mois", "2 mois"])
             if st.sidebar.button("🚀 Analyser", type="primary", use_container_width=True):
@@ -979,6 +976,9 @@ elif st.session_state.page == "factures":
                         liq, t = calculer_liquidites_fournisseur(f_att, p_hist, horizons)
                         st.table(pd.DataFrame({"Horizon": [f"Sous {h}j" for h in horizons], "Estimation (CHF)": [f"{chf_int(round(liq[h]))}" for h in horizons]}))
                     with tab2:
+                        col_opt1, col_opt2, _ = st.columns([1, 1, 3])
+                        show_med = col_opt1.checkbox("Médiane", value=True, key="show_med")
+                        show_std = col_opt2.checkbox("Écart-type", value=True, key="show_std")
                         st.subheader(f"Délais par assureur ({p_name})")
                         if not p_hist.empty:
                             stats = p_hist.groupby("assureur")["delai"].agg(
