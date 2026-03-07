@@ -928,9 +928,6 @@ elif st.session_state.page == "factures":
             f_att["delai_actuel"] = (ajd - f_att["date_facture"]).dt.days
             st.metric("💰 TOTAL BRUT EN ATTENTE", f"{chf(f_att['montant'].sum())} CHF")
 
-            if btn_simuler:
-                pass  # handled inside tab1
-
             if st.session_state.analyse_lancee:
                 tab1, tab_open, tab2, tab3, tab4 = st.tabs(["💰 Liquidités", "📋 Factures ouvertes", "🕒 Délais", "⚠️ Retards", "📈 Évolution"])
                 with tab1:
