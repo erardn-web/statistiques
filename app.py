@@ -978,23 +978,6 @@ elif st.session_state.page == "factures":
                         horizons = [10, 20, 30]
                         liq, t = calculer_liquidites_fournisseur(f_att, p_hist, horizons)
                         st.table(pd.DataFrame({"Horizon": [f"Sous {h}j" for h in horizons], "Estimation (CHF)": [f"{chf_int(round(liq[h]))}" for h in horizons]}))
-                    with tab_open:
-                        st.subheader("Factures ouvertes par assureur")
-                        if not f_att.empty:
-                            ouv = f_att.groupby("assureur").agg(
-                                nb=("montant", "count"),
-                                total=("montant", "sum")
-                            ).reset_index()
-                            ouv.columns = ["Assureur", "Nb factures", "Montant (CHF)"]
-                            ouv = ouv.sort_values("Montant (CHF)", ascending=False)
-                            ouv["Montant (CHF)"] = ouv["Montant (CHF)"].apply(lambda x: chf_int(round(x)))
-                            # Ligne total
-                            total_nb = ouv["Nb factures"].sum()
-                            total_chf = f_att["montant"].sum()
-                            ouv.loc[len(ouv)] = ["TOTAL", total_nb, chf_int(round(total_chf))]
-                            st.table(ouv)
-                        else:
-                            st.info("Aucune facture ouverte.")
                     with tab2:
                         st.subheader(f"Délais par assureur ({p_name})")
                         if not p_hist.empty:
@@ -1101,6 +1084,28 @@ elif st.session_state.page == "factures":
                                 st.download_button("📄 Télécharger le graphique en PDF", _pdf_buf, file_name="evolution_delais.pdf", mime="application/pdf", key="pdf_evol_graph", use_container_width=True)
                             except Exception as _e:
                                 st.caption(f"Export PDF indisponible : {_e}")
+                # Onglet factures ouvertes — indépendant des périodes
+                with tab_open:
+                    st.subheader("Factures ouvertes par assureur")
+                    if not f_att.empty:
+                        # Délai moyen depuis l'historique global (toutes factures payées)
+                        p_hist_global = df[df["date_paiement"].notna()].copy()
+                        p_hist_global["delai"] = (p_hist_global["date_paiement"] - p_hist_global["date_facture"]).dt.days
+                        delai_moy = p_hist_global.groupby("assureur")["delai"].mean().round(0).astype("Int64").to_dict()
+                        ouv = f_att.groupby("assureur").agg(
+                            nb=("montant", "count"),
+                            total=("montant", "sum")
+                        ).reset_index()
+                        ouv["Délai moyen (j)"] = ouv["assureur"].map(delai_moy)
+                        ouv.columns = ["Assureur", "Nb factures", "Montant (CHF)", "Délai moyen (j)"]
+                        ouv = ouv.sort_values("Montant (CHF)", ascending=False)
+                        ouv["Montant (CHF)"] = ouv["Montant (CHF)"].apply(lambda x: chf_int(round(x)))
+                        total_nb = ouv["Nb factures"].sum()
+                        total_chf = f_att["montant"].sum()
+                        ouv.loc[len(ouv)] = ["TOTAL", total_nb, chf_int(round(total_chf)), ""]
+                        st.table(ouv)
+                    else:
+                        st.info("Aucune facture ouverte.")
         except Exception as e: st.error(f"Erreur d'analyse : {e}")
 
 # ==========================================
