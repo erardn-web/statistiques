@@ -964,6 +964,10 @@ elif st.session_state.page == "factures":
 
             if st.session_state.analyse_lancee:
                 tab1, tab_open, tab2, tab3, tab4 = st.tabs(["💰 Liquidités", "📋 Factures ouvertes", "🕒 Délais", "⚠️ Retards", "📈 Évolution"])
+                with tab2:
+                    col_opt1, col_opt2, _ = st.columns([1, 1, 3])
+                    show_med = col_opt1.checkbox("Médiane", value=True, key="show_med")
+                    show_std = col_opt2.checkbox("Écart-type", value=True, key="show_std")
                 for p_name in periods_sel:
                     val = options_p[p_name]
                     limit_p = ajd - pd.DateOffset(months=val) if val else df["date_facture"].min()
@@ -976,9 +980,6 @@ elif st.session_state.page == "factures":
                         liq, t = calculer_liquidites_fournisseur(f_att, p_hist, horizons)
                         st.table(pd.DataFrame({"Horizon": [f"Sous {h}j" for h in horizons], "Estimation (CHF)": [f"{chf_int(round(liq[h]))}" for h in horizons]}))
                     with tab2:
-                        col_opt1, col_opt2, _ = st.columns([1, 1, 3])
-                        show_med = col_opt1.checkbox("Médiane", value=True, key="show_med")
-                        show_std = col_opt2.checkbox("Écart-type", value=True, key="show_std")
                         st.subheader(f"Délais par assureur ({p_name})")
                         if not p_hist.empty:
                             stats = p_hist.groupby("assureur")["delai"].agg(
