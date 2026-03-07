@@ -1080,8 +1080,70 @@ elif st.session_state.page == "factures":
                             st.line_chart(df_plot_sorted)
                             st.dataframe(df_pv.loc[assur_sel].style.highlight_max(axis=1, color='#ff9999').highlight_min(axis=1, color='#99ff99'))
                             try:
-                                _pdf_buf = generer_pdf_graphique_matplotlib("Évolution des délais de paiement", df_plot_sorted.reset_index().set_index("Période"), ylabel="Délai moyen (jours)")
-                                st.download_button("📄 Télécharger le graphique en PDF", _pdf_buf, file_name="evolution_delais.pdf", mime="application/pdf", key="pdf_evol_graph", use_container_width=True)
+                                # PDF combiné : graphique + tableau
+                                import matplotlib
+                                matplotlib.use('Agg')
+                                import matplotlib.pyplot as plt
+                                import matplotlib.ticker as mticker
+                                from reportlab.lib.pagesizes import A4, landscape
+                                from reportlab.lib import colors
+                                from reportlab.lib.units import cm
+                                from reportlab.platypus import SimpleDocTemplate, Image as RLImage, Paragraph, Spacer, Table, TableStyle
+                                from reportlab.lib.styles import ParagraphStyle
+                                from reportlab.lib.enums import TA_CENTER
+                                import io as _io_pdf, tempfile, os
+
+                                fig_mpl, ax = plt.subplots(figsize=(14, 5))
+                                for col in df_plot_sorted.columns:
+                                    ax.plot(df_plot_sorted.index.astype(str), df_plot_sorted[col], marker='o', linewidth=2, label=str(col))
+                                ax.set_title("Évolution des délais de paiement", fontsize=13, fontweight='bold', pad=10)
+                                ax.set_ylabel("Délai moyen (jours)", fontsize=10)
+                                ax.legend(loc='upper left', fontsize=8, ncol=min(4, len(df_plot_sorted.columns)))
+                                ax.grid(axis='y', linestyle='--', alpha=0.5)
+                                plt.xticks(rotation=20, ha='right', fontsize=8)
+                                plt.tight_layout()
+                                tmpf = tempfile.NamedTemporaryFile(suffix='.png', delete=False)
+                                fig_mpl.savefig(tmpf.name, dpi=150, bbox_inches='tight')
+                                plt.close(fig_mpl)
+
+                                buf_pdf = _io_pdf.BytesIO()
+                                page_w = landscape(A4)[0] - 3*cm
+                                doc = SimpleDocTemplate(buf_pdf, pagesize=landscape(A4),
+                                                        leftMargin=1.5*cm, rightMargin=1.5*cm,
+                                                        topMargin=1.5*cm, bottomMargin=1.5*cm)
+                                t_style = ParagraphStyle('t', fontSize=13, fontName='Helvetica-Bold', spaceAfter=4, alignment=TA_CENTER)
+                                s_style = ParagraphStyle('s', fontSize=9, fontName='Helvetica', spaceAfter=8, textColor=colors.grey, alignment=TA_CENTER)
+                                elems = [Paragraph("Évolution des délais de paiement", t_style),
+                                         Paragraph(f"Généré le {datetime.today().strftime('%d.%m.%Y')}", s_style),
+                                         Spacer(1, 0.2*cm),
+                                         RLImage(tmpf.name, width=page_w, height=page_w * 5/14),
+                                         Spacer(1, 0.4*cm),
+                                         Paragraph("Tableau détaillé", t_style),
+                                         Spacer(1, 0.2*cm)]
+                                # Tableau
+                                df_tab = df_pv.loc[assur_sel].copy()
+                                df_tab = df_tab[[c for c in ordre_chrono if c in df_tab.columns]]
+                                df_tab = df_tab.round(1)
+                                cols_t = ["Assureur"] + list(df_tab.columns)
+                                data_t = [cols_t] + [[str(idx)] + [str(v) for v in row] for idx, row in zip(df_tab.index, df_tab.values)]
+                                col_w = page_w / len(cols_t)
+                                tbl = Table(data_t, colWidths=[col_w]*len(cols_t), repeatRows=1)
+                                tbl.setStyle(TableStyle([
+                                    ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#1A6B9A')),
+                                    ('TEXTCOLOR',  (0,0), (-1,0), colors.white),
+                                    ('FONTNAME',   (0,0), (-1,0), 'Helvetica-Bold'),
+                                    ('FONTSIZE',   (0,0), (-1,-1), 8),
+                                    ('ALIGN',      (0,0), (-1,-1), 'CENTER'),
+                                    ('ROWBACKGROUNDS', (0,1), (-1,-1), [colors.white, colors.HexColor('#EEF4F9')]),
+                                    ('GRID',       (0,0), (-1,-1), 0.4, colors.HexColor('#CCCCCC')),
+                                    ('BOTTOMPADDING', (0,0), (-1,-1), 4),
+                                    ('TOPPADDING',    (0,0), (-1,-1), 4),
+                                ]))
+                                elems.append(tbl)
+                                doc.build(elems)
+                                os.unlink(tmpf.name)
+                                buf_pdf.seek(0)
+                                st.download_button("📄 Télécharger graphique + tableau (PDF)", buf_pdf, file_name="evolution_delais.pdf", mime="application/pdf", key="pdf_evol_graph", use_container_width=True)
                             except Exception as _e:
                                 st.caption(f"Export PDF indisponible : {_e}")
                 # Onglet factures ouvertes — indépendant des périodes
