@@ -1088,10 +1088,10 @@ elif st.session_state.page == "factures":
                 with tab_open:
                     st.subheader("Factures ouvertes par assureur")
                     if not f_att.empty:
-                        # Délai moyen depuis l'historique global (toutes factures payées)
-                        p_hist_global = df[df["date_paiement"].notna()].copy()
-                        p_hist_global["delai"] = (p_hist_global["date_paiement"] - p_hist_global["date_facture"]).dt.days
-                        delai_moy = p_hist_global.groupby("assureur")["delai"].mean().round(0).astype("Int64").to_dict()
+                        # Délai moyen sur les 2 derniers mois
+                        p_hist_2m = df[(df["date_paiement"].notna()) & (df["date_facture"] >= ajd - pd.DateOffset(months=2))].copy()
+                        p_hist_2m["delai"] = (p_hist_2m["date_paiement"] - p_hist_2m["date_facture"]).dt.days
+                        delai_moy = p_hist_2m.groupby("assureur")["delai"].mean().round(0).astype("Int64").to_dict()
                         ouv = f_att.groupby("assureur").agg(
                             nb=("montant", "count"),
                             total=("montant", "sum")
