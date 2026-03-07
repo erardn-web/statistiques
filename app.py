@@ -940,6 +940,7 @@ elif st.session_state.page == "factures":
                         p_hist_sim["delai"] = (p_hist_sim["date_paiement"] - p_hist_sim["date_facture"]).dt.days
                         liq, t = calculer_liquidites_fournisseur(f_att, p_hist_sim, [jours_delta])
                         res_sim.append({"Période": p_nom, "Estimation (CHF)": f"{chf_int(round(liq[jours_delta]))}", "Probabilité": f"{t[jours_delta]:.1%}"})
+                    st.markdown(f"**🔮 Simulation au {pd.Timestamp(date_cible).strftime('%d.%m.%Y')}** — dans {jours_delta} jour{'s' if jours_delta > 1 else ''}")
                     st.table(pd.DataFrame(res_sim))
 
             if st.session_state.analyse_lancee:
