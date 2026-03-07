@@ -930,7 +930,19 @@ elif st.session_state.page == "factures":
             st.metric("💰 TOTAL BRUT EN ATTENTE", f"{chf(f_att['montant'].sum())} CHF")
 
             if btn_simuler:
-                jours_delta = (pd.Timestamp(date_cible) - ajd).days
+                ts_cible = pd.Timestamp(date_cible)
+                jour_semaine = ts_cible.weekday()  # 0=lun … 6=dim
+                # Samedi (5) ou dimanche (6) → ramener au vendredi précédent
+                if jour_semaine == 5:
+                    ts_effective = ts_cible - pd.DateOffset(days=1)
+                    note_weekend = f"⚠️ Samedi — les versements tombent le vendredi. Résultat calculé au **{ts_effective.strftime('%d.%m.%Y')}** (vendredi)."
+                elif jour_semaine == 6:
+                    ts_effective = ts_cible - pd.DateOffset(days=2)
+                    note_weekend = f"⚠️ Dimanche — les versements tombent le vendredi. Résultat calculé au **{ts_effective.strftime('%d.%m.%Y')}** (vendredi)."
+                else:
+                    ts_effective = ts_cible
+                    note_weekend = None
+                jours_delta = (ts_effective - ajd).days
                 if jours_delta >= 0:
                     res_sim = []
                     for p_nom in periods_sel:
@@ -940,7 +952,9 @@ elif st.session_state.page == "factures":
                         p_hist_sim["delai"] = (p_hist_sim["date_paiement"] - p_hist_sim["date_facture"]).dt.days
                         liq, t = calculer_liquidites_fournisseur(f_att, p_hist_sim, [jours_delta])
                         res_sim.append({"Période": p_nom, "Estimation (CHF)": f"{chf_int(round(liq[jours_delta]))}", "Probabilité": f"{t[jours_delta]:.1%}"})
-                    st.markdown(f"**🔮 Simulation au {pd.Timestamp(date_cible).strftime('%d.%m.%Y')}** — dans {jours_delta} jour{'s' if jours_delta > 1 else ''}")
+                    st.markdown(f"**🔮 Simulation au {ts_cible.strftime('%d.%m.%Y')}** — dans {(ts_cible - ajd).days} jour{'s' if (ts_cible - ajd).days > 1 else ''}")
+                    if note_weekend:
+                        st.caption(note_weekend)
                     st.table(pd.DataFrame(res_sim))
 
             if st.session_state.analyse_lancee:
