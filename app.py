@@ -289,11 +289,28 @@ def convertir_date(val):
     except:
         return pd.to_datetime(val, errors="coerce")
 
-def calculer_liquidites_fournisseur(f_attente, p_hist, jours_horizons):
-    """Calcul de probabilité de paiement pour le module Facturation"""
+def calculer_liquidites_fournisseur(f_attente, p_hist, jours_horizons, date_cible=None):
+    """Calcul de probabilité de paiement pour le module Facturation.
+    4 niveaux de granularité (du plus précis au plus générique) :
+      1. assureur x fournisseur x jour_semaine
+      2. assureur x fournisseur
+      3. fournisseur seul
+      4. global
+    Si date_cible fournie, pondère par la probabilité historique du jour de semaine.
+    """
     liq = {h: 0.0 for h in jours_horizons}
     taux_glob = {h: 0.0 for h in jours_horizons}
     if p_hist.empty: return liq, taux_glob
+
+    # Précalcul poids jour de semaine par assureur depuis l'historique
+    p_hist2 = p_hist.copy()
+    p_hist2["_jsem"] = pd.to_datetime(p_hist2["date_paiement"]).dt.dayofweek
+    poids_jour_assureur = (
+        p_hist2.groupby(["assureur", "_jsem"]).size() /
+        p_hist2.groupby("assureur").size()
+    ).to_dict()
+    poids_jour_global = p_hist2["_jsem"].value_counts(normalize=True).to_dict()
+
     for h in jours_horizons:
         stats_croisees = p_hist.groupby(["assureur", "fournisseur"])["delai"].apply(lambda x: (x <= h).mean()).to_dict()
         stats_fourn = p_hist.groupby("fournisseur")["delai"].apply(lambda x: (x <= h).mean()).to_dict()
@@ -302,6 +319,11 @@ def calculer_liquidites_fournisseur(f_attente, p_hist, jours_horizons):
         for _, row in f_attente.iterrows():
             key = (row["assureur"], row["fournisseur"])
             prob = stats_croisees.get(key, stats_fourn.get(row["fournisseur"], taux_glob[h]))
+            if date_cible is not None:
+                jsem = pd.Timestamp(date_cible).dayofweek
+                poids = poids_jour_assureur.get((row["assureur"], jsem),
+                        poids_jour_global.get(jsem, 1/5))
+                prob = min(prob * (poids / (1/5)), 1.0)
             total_h += row["montant"] * prob
         liq[h] = total_h
     return liq, taux_glob
