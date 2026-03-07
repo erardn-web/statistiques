@@ -865,6 +865,9 @@ elif st.session_state.page == "factures":
             periods_sel = st.sidebar.multiselect("Analyser les périodes :", list(options_p.keys()), default=["Global", "4 mois", "2 mois"])
             if st.sidebar.button("🚀 Analyser", type="primary", use_container_width=True):
                 st.session_state.analyse_lancee = True
+            st.sidebar.markdown("---")
+            date_cible = st.sidebar.date_input("Date cible (simulation) :", value=datetime.today())
+            btn_simuler = st.sidebar.button("🔮 Simuler", use_container_width=True)
 
             _c = resoudre_colonnes(df_brut)
             # Fournisseur absent en mono-thérapeute → colonne virtuelle
@@ -928,46 +931,38 @@ elif st.session_state.page == "factures":
             f_att["delai_actuel"] = (ajd - f_att["date_facture"]).dt.days
             st.metric("💰 TOTAL BRUT EN ATTENTE", f"{chf(f_att['montant'].sum())} CHF")
 
+            if btn_simuler:
+                ts_cible = pd.Timestamp(date_cible)
+                jour_semaine = ts_cible.weekday()
+                if jour_semaine == 5:
+                    ts_effective = ts_cible - pd.DateOffset(days=1)
+                    note_weekend = f"⚠️ Samedi — les versements tombent le vendredi. Résultat calculé au **{ts_effective.strftime('%d.%m.%Y')}** (vendredi)."
+                elif jour_semaine == 6:
+                    ts_effective = ts_cible - pd.DateOffset(days=2)
+                    note_weekend = f"⚠️ Dimanche — les versements tombent le vendredi. Résultat calculé au **{ts_effective.strftime('%d.%m.%Y')}** (vendredi)."
+                else:
+                    ts_effective = ts_cible
+                    note_weekend = None
+                jours_delta = (ts_effective - ajd).days
+                if jours_delta >= 0:
+                    res_sim = []
+                    for p_nom in periods_sel:
+                        val = options_p[p_nom]
+                        limit = ajd - pd.DateOffset(months=val) if val else df["date_facture"].min()
+                        p_hist_sim = df[(df["date_paiement"].notna()) & (df["date_facture"] >= limit)].copy()
+                        p_hist_sim["delai"] = (p_hist_sim["date_paiement"] - p_hist_sim["date_facture"]).dt.days
+                        liq, _ = calculer_liquidites_fournisseur(f_att, p_hist_sim, [jours_delta])
+                        res_sim.append({"Période": p_nom, "Estimation (CHF)": f"{chf_int(round(liq[jours_delta]))}"})
+                    st.markdown(f"**🔮 Simulation au {ts_cible.strftime('%d.%m.%Y')}** — dans {(ts_cible - ajd).days} jour{'s' if (ts_cible - ajd).days > 1 else ''}")
+                    if note_weekend:
+                        st.caption(note_weekend)
+                    df_sim = pd.DataFrame(res_sim)
+                    rows_html = "".join(f"<tr>{''.join(f'<td style=padding:6px 12px;border-bottom:1px solid #e0e0e0;>{v}</td>' for v in r)}</tr>" for r in df_sim.values)
+                    headers_html = "".join(f"<th style='padding:6px 12px;border-bottom:2px solid #b0c4d8;background:#AED6F1;text-align:left;font-weight:600;'>{c}</th>" for c in df_sim.columns)
+                    st.markdown(f"<table style='background:#D6EAF8;border-collapse:collapse;width:auto;font-size:0.9rem;'><thead><tr>{headers_html}</tr></thead><tbody>{rows_html}</tbody></table>", unsafe_allow_html=True)
+
             if st.session_state.analyse_lancee:
                 tab1, tab_open, tab2, tab3, tab4 = st.tabs(["💰 Liquidités", "📋 Factures ouvertes", "🕒 Délais", "⚠️ Retards", "📈 Évolution"])
-                with tab1:
-                    col_date, col_btn = st.columns([3, 1])
-                    date_cible = col_date.date_input("Simuler au :", value=datetime.today(), key="date_sim")
-                    btn_simuler = col_btn.button("🔮 Simuler", use_container_width=True, key="btn_sim")
-                    if btn_simuler:
-                        ts_cible = pd.Timestamp(date_cible)
-                        jour_semaine = ts_cible.weekday()
-                        if jour_semaine == 5:
-                            ts_effective = ts_cible - pd.DateOffset(days=1)
-                            note_weekend = f"⚠️ Samedi — les versements tombent le vendredi. Résultat calculé au **{ts_effective.strftime('%d.%m.%Y')}** (vendredi)."
-                        elif jour_semaine == 6:
-                            ts_effective = ts_cible - pd.DateOffset(days=2)
-                            note_weekend = f"⚠️ Dimanche — les versements tombent le vendredi. Résultat calculé au **{ts_effective.strftime('%d.%m.%Y')}** (vendredi)."
-                        else:
-                            ts_effective = ts_cible
-                            note_weekend = None
-                        jours_delta = (ts_effective - ajd).days
-                        if jours_delta >= 0:
-                            res_sim = []
-                            for p_nom in periods_sel:
-                                val = options_p[p_nom]
-                                limit = ajd - pd.DateOffset(months=val) if val else df["date_facture"].min()
-                                p_hist_sim = df[(df["date_paiement"].notna()) & (df["date_facture"] >= limit)].copy()
-                                p_hist_sim["delai"] = (p_hist_sim["date_paiement"] - p_hist_sim["date_facture"]).dt.days
-                                liq, _ = calculer_liquidites_fournisseur(f_att, p_hist_sim, [jours_delta])
-                                res_sim.append({"Période": p_nom, "Estimation (CHF)": f"{chf_int(round(liq[jours_delta]))}"})
-                            st.markdown(f"**🔮 Simulation au {ts_cible.strftime('%d.%m.%Y')}** — dans {(ts_cible - ajd).days} jour{'s' if (ts_cible - ajd).days > 1 else ''}")
-                            if note_weekend:
-                                st.caption(note_weekend)
-                            df_sim = pd.DataFrame(res_sim)
-                            rows_html = "".join(f"<tr>{''.join(f'<td style=padding:6px 12px;border-bottom:1px solid #e0e0e0;>{v}</td>' for v in r)}</tr>" for r in df_sim.values)
-                            headers_html = "".join(f"<th style='padding:6px 12px;border-bottom:2px solid #b0c4d8;background:#AED6F1;text-align:left;font-weight:600;'>{c}</th>" for c in df_sim.columns)
-                            st.markdown(f"<table style='background:#D6EAF8;border-collapse:collapse;width:auto;font-size:0.9rem;'><thead><tr>{headers_html}</tr></thead><tbody>{rows_html}</tbody></table>", unsafe_allow_html=True)
-                            st.markdown("<br>", unsafe_allow_html=True)
-                    st.markdown("---")
-                    col_opt1, col_opt2, _ = st.columns([1, 1, 3])
-                    show_med = col_opt1.checkbox("Médiane", value=True, key="show_med")
-                    show_std = col_opt2.checkbox("Écart-type", value=True, key="show_std")
                 with tab2:
                     col_opt1, col_opt2, _ = st.columns([1, 1, 3])
                     show_med = col_opt1.checkbox("Médiane", value=True, key="show_med")
