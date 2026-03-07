@@ -960,8 +960,10 @@ elif st.session_state.page == "factures":
                     st.markdown(f"**🔮 Simulation au {ts_cible.strftime('%d.%m.%Y')}** — dans {(ts_cible - ajd).days} jour{'s' if (ts_cible - ajd).days > 1 else ''}")
                     if note_weekend:
                         st.caption(note_weekend)
-                    st.markdown("<style>[data-testid='stTable']:has(th) { background-color: #D6EAF8; } </style>", unsafe_allow_html=True)
-                    st.table(pd.DataFrame(res_sim))
+                    df_sim = pd.DataFrame(res_sim)
+                    rows_html = "".join(f"<tr>{''.join(f'<td style=padding:6px 12px;border-bottom:1px solid #e0e0e0;>{v}</td>' for v in r)}</tr>" for r in df_sim.values)
+                    headers_html = "".join(f"<th style='padding:6px 12px;border-bottom:2px solid #b0c4d8;background:#AED6F1;text-align:left;font-weight:600;'>{c}</th>" for c in df_sim.columns)
+                    st.markdown(f"<table style='background:#D6EAF8;border-collapse:collapse;width:auto;font-size:0.9rem;'><thead><tr>{headers_html}</tr></thead><tbody>{rows_html}</tbody></table>", unsafe_allow_html=True)
 
             if st.session_state.analyse_lancee:
                 tab1, tab2, tab3, tab4 = st.tabs(["💰 Liquidités", "🕒 Délais", "⚠️ Retards", "📈 Évolution"])
