@@ -1035,8 +1035,8 @@ elif st.session_state.page == "factures":
                     evol_data = []
                     p_hist_global = df[df["date_paiement"].notna()].copy()
                     p_hist_global["delai"] = (p_hist_global["date_paiement"] - p_hist_global["date_facture"]).dt.days
-                    # Classement global par volume de factures (base pour les tops)
-                    ranking_assureurs = p_hist_global.groupby("assureur").size().sort_values(ascending=False)
+                    # Classement global par CA total (base pour les tops)
+                    ranking_assureurs = p_hist_global.groupby("assureur")["montant"].sum().sort_values(ascending=False)
                     tous_assureurs = ranking_assureurs.index.tolist()
 
                     for n, v in periodes_graph.items():
@@ -1088,7 +1088,7 @@ elif st.session_state.page == "factures":
                 with tab_open:
                     st.subheader("Factures ouvertes par assureur")
                     if not f_att.empty:
-                        # Délai moyen sur les 2 derniers mois
+                        # Délai moyen sur les 2 derniers mois (df a déjà le regroupement appliqué)
                         p_hist_2m = df[(df["date_paiement"].notna()) & (df["date_facture"] >= ajd - pd.DateOffset(months=2))].copy()
                         p_hist_2m["delai"] = (p_hist_2m["date_paiement"] - p_hist_2m["date_facture"]).dt.days
                         delai_moy = p_hist_2m.groupby("assureur")["delai"].mean().round(0).astype("Int64").to_dict()
