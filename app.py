@@ -858,19 +858,19 @@ elif st.session_state.page == "factures":
             sel_fournisseurs = st.sidebar.multiselect("Fournisseurs :", options=sorted(fournisseurs), default=fournisseurs)
             lois = df_brut[_c_tmp["loi"]].dropna().unique().tolist()
             sel_lois = st.sidebar.multiselect("Types de Loi :", options=sorted(lois), default=lois)
+            regrouper_assureurs = st.sidebar.checkbox("Regrouper par groupe d'assureurs", value=False,
+                help="Fusionne les assureurs appartenant au même groupe (ex. Le Groupe Mutuel + Philos → Groupe Mutuel)")
             st.sidebar.header("📊 3. Options Délais")
             show_med = st.sidebar.checkbox("Afficher la Médiane", value=True)
             show_std = st.sidebar.checkbox("Afficher l'Écart-type", value=True)
-            regrouper_assureurs = st.sidebar.checkbox("Regrouper par groupe d'assureurs", value=False,
-                help="Fusionne les assureurs appartenant au même groupe (ex. Le Groupe Mutuel + Philos → Groupe Mutuel)")
             st.sidebar.header("📅 4. Périodes & Simulation")
             options_p = {"Global": None, "6 mois": 6, "4 mois": 4, "3 mois": 3, "2 mois": 2, "1 mois": 1}
             periods_sel = st.sidebar.multiselect("Analyser les périodes :", list(options_p.keys()), default=["Global", "4 mois", "2 mois"])
-            date_cible = st.sidebar.date_input("Date cible (simulation) :", value=datetime.today())
-            col_b1, col_b2 = st.sidebar.columns(2)
-            if col_b1.button("🚀 Analyser", type="primary", use_container_width=True):
+            if st.sidebar.button("🚀 Analyser", type="primary", use_container_width=True):
                 st.session_state.analyse_lancee = True
-            btn_simuler = col_b2.button("🔮 Simuler", use_container_width=True)
+            st.sidebar.markdown("---")
+            date_cible = st.sidebar.date_input("Date cible (simulation) :", value=datetime.today())
+            btn_simuler = st.sidebar.button("🔮 Simuler", use_container_width=True)
 
             _c = resoudre_colonnes(df_brut)
             # Fournisseur absent en mono-thérapeute → colonne virtuelle
