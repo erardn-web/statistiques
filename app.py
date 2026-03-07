@@ -289,28 +289,16 @@ def convertir_date(val):
     except:
         return pd.to_datetime(val, errors="coerce")
 
-def calculer_liquidites_fournisseur(f_attente, p_hist, jours_horizons, date_cible=None):
+def calculer_liquidites_fournisseur(f_attente, p_hist, jours_horizons):
     """Calcul de probabilité de paiement pour le module Facturation.
-    4 niveaux de granularité (du plus précis au plus générique) :
-      1. assureur x fournisseur x jour_semaine
-      2. assureur x fournisseur
-      3. fournisseur seul
-      4. global
-    Si date_cible fournie, pondère par la probabilité historique du jour de semaine.
+    3 niveaux de granularité (du plus précis au plus générique) :
+      1. assureur x fournisseur
+      2. fournisseur seul
+      3. global
     """
     liq = {h: 0.0 for h in jours_horizons}
     taux_glob = {h: 0.0 for h in jours_horizons}
     if p_hist.empty: return liq, taux_glob
-
-    # Précalcul poids jour de semaine par assureur depuis l'historique
-    p_hist2 = p_hist.copy()
-    p_hist2["_jsem"] = pd.to_datetime(p_hist2["date_paiement"]).dt.dayofweek
-    poids_jour_assureur = (
-        p_hist2.groupby(["assureur", "_jsem"]).size() /
-        p_hist2.groupby("assureur").size()
-    ).to_dict()
-    poids_jour_global = p_hist2["_jsem"].value_counts(normalize=True).to_dict()
-
     for h in jours_horizons:
         stats_croisees = p_hist.groupby(["assureur", "fournisseur"])["delai"].apply(lambda x: (x <= h).mean()).to_dict()
         stats_fourn = p_hist.groupby("fournisseur")["delai"].apply(lambda x: (x <= h).mean()).to_dict()
@@ -319,11 +307,6 @@ def calculer_liquidites_fournisseur(f_attente, p_hist, jours_horizons, date_cibl
         for _, row in f_attente.iterrows():
             key = (row["assureur"], row["fournisseur"])
             prob = stats_croisees.get(key, stats_fourn.get(row["fournisseur"], taux_glob[h]))
-            if date_cible is not None:
-                jsem = pd.Timestamp(date_cible).dayofweek
-                poids = poids_jour_assureur.get((row["assureur"], jsem),
-                        poids_jour_global.get(jsem, 1/5))
-                prob = min(prob * (poids / (1/5)), 1.0)
             total_h += row["montant"] * prob
         liq[h] = total_h
     return liq, taux_glob
@@ -972,7 +955,7 @@ elif st.session_state.page == "factures":
                         limit = ajd - pd.DateOffset(months=val) if val else df["date_facture"].min()
                         p_hist_sim = df[(df["date_paiement"].notna()) & (df["date_facture"] >= limit)].copy()
                         p_hist_sim["delai"] = (p_hist_sim["date_paiement"] - p_hist_sim["date_facture"]).dt.days
-                        liq, _ = calculer_liquidites_fournisseur(f_att, p_hist_sim, [jours_delta], date_cible=ts_effective)
+                        liq, _ = calculer_liquidites_fournisseur(f_att, p_hist_sim, [jours_delta])
                         res_sim.append({"Période": p_nom, "Estimation (CHF)": f"{chf_int(round(liq[jours_delta]))}"})
                     st.markdown(f"**🔮 Simulation au {ts_cible.strftime('%d.%m.%Y')}** — dans {(ts_cible - ajd).days} jour{'s' if (ts_cible - ajd).days > 1 else ''}")
                     if note_weekend:
