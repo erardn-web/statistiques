@@ -960,14 +960,8 @@ elif st.session_state.page == "factures":
                     st.markdown(f"**🔮 Simulation au {ts_cible.strftime('%d.%m.%Y')}** — dans {(ts_cible - ajd).days} jour{'s' if (ts_cible - ajd).days > 1 else ''}")
                     if note_weekend:
                         st.caption(note_weekend)
-                    df_sim = pd.DataFrame(res_sim)
-                    st.markdown(
-                        "<style>.sim-table table {background-color: #D6EAF8;} .sim-table th {background-color: #AED6F1 !important;}</style>"
-                        "<div class='sim-table'>" +
-                        df_sim.to_html(index=False) +
-                        "</div>",
-                        unsafe_allow_html=True
-                    )
+                    st.markdown("<style>[data-testid='stTable']:has(th) { background-color: #D6EAF8; } </style>", unsafe_allow_html=True)
+                    st.table(pd.DataFrame(res_sim))
 
             if st.session_state.analyse_lancee:
                 tab1, tab2, tab3, tab4 = st.tabs(["💰 Liquidités", "🕒 Délais", "⚠️ Retards", "📈 Évolution"])
@@ -981,7 +975,7 @@ elif st.session_state.page == "factures":
                         st.subheader(f"Liquidités : {p_name}")
                         horizons = [10, 20, 30]
                         liq, t = calculer_liquidites_fournisseur(f_att, p_hist, horizons)
-                        st.table(pd.DataFrame({"Horizon": [f"Sous {h}j" for h in horizons], "Estimation (CHF)": [f"{chf_int(round(liq[h]))}" for h in horizons], "Probabilité": [f"{round(t[h]*100)}%" for h in horizons]}))
+                        st.table(pd.DataFrame({"Horizon": [f"Sous {h}j" for h in horizons], "Estimation (CHF)": [f"{chf_int(round(liq[h]))}" for h in horizons]}))
                     with tab2:
                         st.subheader(f"Délais par assureur ({p_name})")
                         if not p_hist.empty:
