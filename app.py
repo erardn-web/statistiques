@@ -966,7 +966,7 @@ elif st.session_state.page == "factures":
                     st.markdown(f"<table style='background:#D6EAF8;border-collapse:collapse;width:auto;font-size:0.9rem;'><thead><tr>{headers_html}</tr></thead><tbody>{rows_html}</tbody></table>", unsafe_allow_html=True)
 
             if st.session_state.analyse_lancee:
-                tab1, tab2, tab3, tab4 = st.tabs(["💰 Liquidités", "🕒 Délais", "⚠️ Retards", "📈 Évolution"])
+                tab1, tab_open, tab2, tab3, tab4 = st.tabs(["💰 Liquidités", "📋 Factures ouvertes", "🕒 Délais", "⚠️ Retards", "📈 Évolution"])
                 for p_name in periods_sel:
                     val = options_p[p_name]
                     limit_p = ajd - pd.DateOffset(months=val) if val else df["date_facture"].min()
@@ -978,6 +978,23 @@ elif st.session_state.page == "factures":
                         horizons = [10, 20, 30]
                         liq, t = calculer_liquidites_fournisseur(f_att, p_hist, horizons)
                         st.table(pd.DataFrame({"Horizon": [f"Sous {h}j" for h in horizons], "Estimation (CHF)": [f"{chf_int(round(liq[h]))}" for h in horizons]}))
+                    with tab_open:
+                        st.subheader("Factures ouvertes par assureur")
+                        if not f_att.empty:
+                            ouv = f_att.groupby("assureur").agg(
+                                nb=("montant", "count"),
+                                total=("montant", "sum")
+                            ).reset_index()
+                            ouv.columns = ["Assureur", "Nb factures", "Montant (CHF)"]
+                            ouv = ouv.sort_values("Montant (CHF)", ascending=False)
+                            ouv["Montant (CHF)"] = ouv["Montant (CHF)"].apply(lambda x: chf_int(round(x)))
+                            # Ligne total
+                            total_nb = ouv["Nb factures"].sum()
+                            total_chf = f_att["montant"].sum()
+                            ouv.loc[len(ouv)] = ["TOTAL", total_nb, chf_int(round(total_chf))]
+                            st.table(ouv)
+                        else:
+                            st.info("Aucune facture ouverte.")
                     with tab2:
                         st.subheader(f"Délais par assureur ({p_name})")
                         if not p_hist.empty:
