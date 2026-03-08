@@ -1260,39 +1260,26 @@ elif st.session_state.page == "factures":
                             st.subheader("Profil de paiement par assureur")
                             p_hist_desc = df[df["date_paiement"].notna()].copy()
                             p_hist_desc["delai"] = (p_hist_desc["date_paiement"] - p_hist_desc["date_facture"]).dt.days
-                            seuils = [10, 20, 30, 45, 60]
 
                             for assureur in assur_sel_age:
                                 d = p_hist_desc[p_hist_desc["assureur"] == assureur]["delai"]
                                 if len(d) < 3:
                                     st.markdown(f"**{assureur}** — historique insuffisant pour établir un profil.")
                                     continue
-                                pcts = {s: (d <= s).mean() for s in seuils}
-                                phrases = []
-                                if pcts[10] >= 0.99:
-                                    phrases.append("paie la quasi-totalité de ses factures en moins de 10 jours")
-                                else:
-                                    for i, s in enumerate(seuils):
-                                        p = pcts[s]
-                                        p_prev = pcts[seuils[i-1]] if i > 0 else 0.0
-                                        if p >= 0.80 and p_prev < 0.80:
-                                            phrases.append(f"paie {round(p*100)}% de ses factures en moins de {s} jours")
-                                            break
-                                    if pcts[10] < 0.02:
-                                        phrases.append("ne paie jamais en moins de 10 jours")
-                                    elif pcts[20] < 0.02:
-                                        phrases.append("ne paie presque jamais en moins de 20 jours")
-                                    retard_45 = 1 - pcts[30]
-                                    retard_60 = 1 - pcts[45]
-                                    if retard_60 >= 0.05:
-                                        phrases.append(f"{round(retard_60*100)}% sont payées avec plus de 45 jours de délai")
-                                    elif retard_45 >= 0.05:
-                                        phrases.append(f"{round(retard_45*100)}% sont payées entre 30 et 45 jours")
-                                    seuil_qt = next((s for s in seuils if pcts[s] >= 0.99), None)
-                                    if seuil_qt:
-                                        phrases.append(f"mais paie la quasi-totalité en moins de {seuil_qt} jours")
-                                desc = " — ".join(phrases) if phrases else "profil de paiement variable"
-                                st.markdown(f"🏦 **{assureur}** : {desc}.")
+                                n = len(d)
+                                p_10  = (d <= 10).mean()
+                                p_20  = ((d > 10) & (d <= 20)).mean()
+                                p_30  = ((d > 20) & (d <= 30)).mean()
+                                p_ret = (d > 30).mean()
+
+                                parties = []
+                                if p_10  > 0.01: parties.append(f"**{round(p_10*100)}%** en moins de 10 jours")
+                                if p_20  > 0.01: parties.append(f"**{round(p_20*100)}%** entre 10 et 20 jours")
+                                if p_30  > 0.01: parties.append(f"**{round(p_30*100)}%** entre 20 et 30 jours")
+                                if p_ret > 0.01: parties.append(f"**{round(p_ret*100)}%** en retard (>30 jours)")
+
+                                desc = ", ".join(parties) if parties else "profil non établi"
+                                st.markdown(f"🏦 **{assureur}** *(sur {n} factures)* : {desc}.")
                     else:
                         st.info("Aucune facture ouverte.")
         except Exception as e: st.error(f"Erreur d'analyse : {e}")
