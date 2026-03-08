@@ -1300,20 +1300,18 @@ elif st.session_state.page == "factures":
                                     notes.append("✅ Payeur très fiable — quasi aucune gestion de relance nécessaire.")
                                 elif p_10 >= 0.80:
                                     notes.append("✅ Bon payeur — les quelques retards restent marginaux.")
-                                elif delai_moy_ass > delai_moyen_global * 1.5:
-                                    notes.append(f"⚠️ Délai moyen historique de {round(delai_moy_ass)} jours — significativement au-dessus de la moyenne du cabinet ({round(delai_moyen_global)} j). À surveiller.")
-                                elif delai_moy_ass > delai_moyen_global:
-                                    notes.append(f"ℹ️ Délai moyen historique de {round(delai_moy_ass)} jours — légèrement au-dessus de la moyenne ({round(delai_moyen_global)} j).")
+                                elif p_ret_glob >= 0.20:
+                                    notes.append("⚠️ Payeur lent — à surveiller activement.")
                                 else:
-                                    notes.append(f"✅ Délai moyen historique de {round(delai_moy_ass)} jours — dans la moyenne du cabinet.")
+                                    notes.append("ℹ️ Comportement de paiement dans la moyenne.")
 
                                 if p_ret_glob >= 0.20:
-                                    notes.append(f"🔴 1 facture sur 5 dépasse 30 jours sur l'ensemble de l'historique — un suivi actif des impayés est recommandé.")
+                                    notes.append("🔴 1 facture sur 5 dépasse 30 jours sur l'ensemble de l'historique — un suivi actif des impayés est recommandé.")
                                 elif p_ret_glob >= 0.10:
-                                    notes.append(f"🟡 Taux de retard historique de {round(p_ret_glob*100)}% — quelques dossiers méritent un suivi ponctuel.")
+                                    notes.append(f"🟡 Taux de retard de {round(p_ret_glob*100)}% sur l'historique global — quelques dossiers méritent un suivi ponctuel.")
 
                                 if len(d_glob) >= 3 and delai_med_ass < delai_moy_ass * 0.7:
-                                    notes.append(f"ℹ️ Médiane historique à {round(delai_med_ass)} j vs moyenne à {round(delai_moy_ass)} j — quelques factures très tardives tirent la moyenne vers le haut.")
+                                    notes.append("ℹ️ Quelques factures très tardives tirent la moyenne vers le haut — la majorité des paiements reste plus rapide.")
 
                                 # Tendance : comparer 2 derniers mois vs période précédente
                                 date_2m = ajd - pd.DateOffset(months=2)
