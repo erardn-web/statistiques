@@ -1203,7 +1203,28 @@ elif st.session_state.page == "factures":
                         pivot = f_att2.groupby(["tranche", "assureur"])["montant"].sum().unstack(fill_value=0)
                         ordre = [t[0] for t in tranches if t[0] in pivot.index]
                         pivot = pivot.loc[ordre]
-                        st.bar_chart(pivot)
+
+                        import matplotlib
+                        matplotlib.use('Agg')
+                        import matplotlib.pyplot as plt
+                        fig, ax = plt.subplots(figsize=(12, 5))
+                        bottom = [0] * len(pivot)
+                        colors_list = plt.cm.tab20.colors
+                        for i, assureur in enumerate(pivot.columns):
+                            vals = pivot[assureur].values
+                            ax.bar(pivot.index, vals, bottom=bottom, label=assureur,
+                                   color=colors_list[i % len(colors_list)], edgecolor='white', linewidth=0.5)
+                            bottom = [b + v for b, v in zip(bottom, vals)]
+                        ax.set_title("CA en attente par âge et assureur", fontsize=13, fontweight='bold')
+                        ax.set_xlabel("Tranche d'âge", fontsize=10)
+                        ax.set_ylabel("CA (CHF)", fontsize=10)
+                        ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: chf_int(x)))
+                        ax.legend(loc='upper right', fontsize=8, ncol=2)
+                        ax.grid(axis='y', linestyle='--', alpha=0.4)
+                        plt.xticks(fontsize=9)
+                        plt.tight_layout()
+                        st.pyplot(fig)
+                        plt.close(fig)
                     else:
                         st.info("Aucune facture ouverte.")
         except Exception as e: st.error(f"Erreur d'analyse : {e}")
