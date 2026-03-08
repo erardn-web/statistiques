@@ -295,20 +295,45 @@ def calculer_liquidites_fournisseur(f_attente, p_hist, jours_horizons):
       1. assureur x fournisseur
       2. fournisseur seul
       3. global
+    Utilise une probabilité conditionnelle tenant compte de l'âge de chaque facture :
+      P(payée dans h jours | non payée après age jours) =
+        [P(delai ≤ age+h) - P(delai ≤ age)] / [1 - P(delai ≤ age)]
     """
     liq = {h: 0.0 for h in jours_horizons}
     taux_glob = {h: 0.0 for h in jours_horizons}
     if p_hist.empty: return liq, taux_glob
+
+    def prob_cond(delais, age, h):
+        """Probabilité conditionnelle : payée dans h jours sachant non payée après age jours."""
+        p_age    = (delais <= age).mean()
+        p_age_h  = (delais <= age + h).mean()
+        survie   = 1 - p_age
+        if survie < 0.01:  # quasi tout le monde a payé à cet âge → prob ≈ 1
+            return 1.0
+        return (p_age_h - p_age) / survie
+
     for h in jours_horizons:
-        stats_croisees = p_hist.groupby(["assureur", "fournisseur"])["delai"].apply(lambda x: (x <= h).mean()).to_dict()
-        stats_fourn = p_hist.groupby("fournisseur")["delai"].apply(lambda x: (x <= h).mean()).to_dict()
-        taux_glob[h] = (p_hist["delai"] <= h).mean()
+        # Précalcul des séries de délais par groupe
+        delais_croises = p_hist.groupby(["assureur", "fournisseur"])["delai"].apply(list).to_dict()
+        delais_fourn   = p_hist.groupby("fournisseur")["delai"].apply(list).to_dict()
+        delais_global  = p_hist["delai"].values
+        import numpy as np
+        delais_global  = np.array(delais_global)
+
         total_h = 0.0
         for _, row in f_attente.iterrows():
+            age = int(row.get("delai_actuel", 0))
             key = (row["assureur"], row["fournisseur"])
-            prob = stats_croisees.get(key, stats_fourn.get(row["fournisseur"], taux_glob[h]))
+            if key in delais_croises:
+                d = np.array(delais_croises[key])
+            elif row["fournisseur"] in delais_fourn:
+                d = np.array(delais_fourn[row["fournisseur"]])
+            else:
+                d = delais_global
+            prob = prob_cond(d, age, h)
             total_h += row["montant"] * prob
         liq[h] = total_h
+        taux_glob[h] = prob_cond(delais_global, 0, h)  # indicatif global à age=0
     return liq, taux_glob
 
 # 👥 MODULE : PILOTAGE FLUX
@@ -951,7 +976,10 @@ elif st.session_state.page == "factures":
                         limit = ajd - pd.DateOffset(months=val) if val else df["date_facture"].min()
                         p_hist_sim = df[(df["date_paiement"].notna()) & (df["date_facture"] >= limit)].copy()
                         p_hist_sim["delai"] = (p_hist_sim["date_paiement"] - p_hist_sim["date_facture"]).dt.days
-                        liq, _ = calculer_liquidites_fournisseur(f_att, p_hist_sim, [jours_delta])
+                        # Âge des factures au jour de la simulation (pas aujourd'hui)
+                        f_att_sim = f_att.copy()
+                        f_att_sim["delai_actuel"] = (ts_effective - f_att_sim["date_facture"]).dt.days.clip(lower=0)
+                        liq, _ = calculer_liquidites_fournisseur(f_att_sim, p_hist_sim, [jours_delta])
                         res_sim.append({"Période": p_nom, "Estimation (CHF)": f"{chf_int(round(liq[jours_delta]))}"})
                     st.markdown(f"**🔮 Simulation au {ts_cible.strftime('%d.%m.%Y')}** — dans {(ts_cible - ajd).days} jour{'s' if (ts_cible - ajd).days > 1 else ''}")
                     if note_weekend:
