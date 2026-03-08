@@ -291,13 +291,13 @@ def convertir_date(val):
 
 def calculer_liquidites_fournisseur(f_attente, p_hist, jours_horizons):
     """Calcul de probabilité de paiement pour le module Facturation.
-    3 niveaux de granularité (du plus précis au plus générique) :
-      1. assureur x fournisseur
-      2. fournisseur seul
-      3. global
-    Tient compte de l'âge de chaque facture : pour une facture de age jours
-    à horizon h, on calcule P(delai ≤ age + h) — probabilité d'être payée
-    avant age+h jours depuis émission, sans division explosive.
+    3 niveaux de granularité : assureur×fournisseur → fournisseur → global.
+
+    Probabilité marginale : P(payée dans les h prochains jours)
+      = P(delai ≤ age+h) - P(delai ≤ age)
+    Naturellement 0 pour les factures trop jeunes à court horizon,
+    maximale autour du délai habituel de l'assureur,
+    retourne à 0 pour les factures anormalement vieilles — sans division ni explosion.
     """
     liq = {h: 0.0 for h in jours_horizons}
     taux_glob = {h: 0.0 for h in jours_horizons}
@@ -313,7 +313,6 @@ def calculer_liquidites_fournisseur(f_attente, p_hist, jours_horizons):
         total_h = 0.0
         for _, row in f_attente.iterrows():
             age = int(row.get("delai_actuel", 0))
-            seuil = age + h
             key = (row["assureur"], row["fournisseur"])
             if key in delais_croises:
                 d = delais_croises[key]
@@ -321,10 +320,11 @@ def calculer_liquidites_fournisseur(f_attente, p_hist, jours_horizons):
                 d = delais_fourn[row["fournisseur"]]
             else:
                 d = delais_global
-            prob = (d <= seuil).mean()
+            prob = max((d <= age + h).mean() - (d <= age).mean(), 0.0)
             total_h += row["montant"] * prob
         liq[h] = total_h
     return liq, taux_glob
+
 
 # 👥 MODULE : PILOTAGE FLUX
 # ==========================================
