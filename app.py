@@ -1257,12 +1257,17 @@ elif st.session_state.page == "factures":
 
                             # Descriptions textuelles
                             st.markdown("---")
-                            st.subheader("Profil de paiement par assureur")
-                            p_hist_desc = df[df["date_paiement"].notna()].copy()
+                            st.subheader("Profil de paiement par assureur — 2 derniers mois")
+                            p_hist_desc = df[
+                                (df["date_paiement"].notna()) &
+                                (df["date_facture"] >= ajd - pd.DateOffset(months=2))
+                            ].copy()
                             p_hist_desc["delai"] = (p_hist_desc["date_paiement"] - p_hist_desc["date_facture"]).dt.days
 
-                            # Délai moyen global — référence pour comparer
-                            delai_moyen_global = p_hist_desc["delai"].mean()
+                            # Historique global pour l'appréciation experte
+                            p_hist_global = df[df["date_paiement"].notna()].copy()
+                            p_hist_global["delai"] = (p_hist_global["date_paiement"] - p_hist_global["date_facture"]).dt.days
+                            delai_moyen_global = p_hist_global["delai"].mean()
 
                             for assureur in assur_sel_age:
                                 d = p_hist_desc[p_hist_desc["assureur"] == assureur]["delai"]
@@ -1274,8 +1279,12 @@ elif st.session_state.page == "factures":
                                 p_20  = ((d > 10) & (d <= 20)).mean()
                                 p_30  = ((d > 20) & (d <= 30)).mean()
                                 p_ret = (d > 30).mean()
-                                delai_moy_ass = d.mean()
-                                delai_med_ass = d.median()
+
+                                # Appréciation basée sur l'historique global
+                                d_glob = p_hist_global[p_hist_global["assureur"] == assureur]["delai"]
+                                delai_moy_ass = d_glob.mean() if len(d_glob) >= 3 else d.mean()
+                                delai_med_ass = d_glob.median() if len(d_glob) >= 3 else d.median()
+                                p_ret_glob = (d_glob > 30).mean() if len(d_glob) >= 3 else p_ret
 
                                 # Ligne factuelle
                                 parties = []
@@ -1292,19 +1301,19 @@ elif st.session_state.page == "factures":
                                 elif p_10 >= 0.80:
                                     notes.append("✅ Bon payeur — les quelques retards restent marginaux.")
                                 elif delai_moy_ass > delai_moyen_global * 1.5:
-                                    notes.append(f"⚠️ Délai moyen de {round(delai_moy_ass)} jours — significativement au-dessus de la moyenne du cabinet ({round(delai_moyen_global)} j). À surveiller.")
+                                    notes.append(f"⚠️ Délai moyen historique de {round(delai_moy_ass)} jours — significativement au-dessus de la moyenne du cabinet ({round(delai_moyen_global)} j). À surveiller.")
                                 elif delai_moy_ass > delai_moyen_global:
-                                    notes.append(f"ℹ️ Délai moyen de {round(delai_moy_ass)} jours — légèrement au-dessus de la moyenne ({round(delai_moyen_global)} j).")
+                                    notes.append(f"ℹ️ Délai moyen historique de {round(delai_moy_ass)} jours — légèrement au-dessus de la moyenne ({round(delai_moyen_global)} j).")
                                 else:
-                                    notes.append(f"✅ Délai moyen de {round(delai_moy_ass)} jours — dans la moyenne du cabinet.")
+                                    notes.append(f"✅ Délai moyen historique de {round(delai_moy_ass)} jours — dans la moyenne du cabinet.")
 
-                                if p_ret >= 0.20:
-                                    notes.append(f"🔴 1 facture sur 5 dépasse 30 jours — un suivi actif des impayés est recommandé.")
-                                elif p_ret >= 0.10:
-                                    notes.append(f"🟡 Taux de retard de {round(p_ret*100)}% — quelques dossiers méritent un suivi ponctuel.")
+                                if p_ret_glob >= 0.20:
+                                    notes.append(f"🔴 1 facture sur 5 dépasse 30 jours sur l'ensemble de l'historique — un suivi actif des impayés est recommandé.")
+                                elif p_ret_glob >= 0.10:
+                                    notes.append(f"🟡 Taux de retard historique de {round(p_ret_glob*100)}% — quelques dossiers méritent un suivi ponctuel.")
 
-                                if delai_med_ass < delai_moy_ass * 0.7:
-                                    notes.append(f"ℹ️ Médiane à {round(delai_med_ass)} j vs moyenne à {round(delai_moy_ass)} j — quelques factures très tardives tirent la moyenne vers le haut.")
+                                if len(d_glob) >= 3 and delai_med_ass < delai_moy_ass * 0.7:
+                                    notes.append(f"ℹ️ Médiane historique à {round(delai_med_ass)} j vs moyenne à {round(delai_moy_ass)} j — quelques factures très tardives tirent la moyenne vers le haut.")
 
                                 note_txt = " ".join(notes)
                                 st.markdown(f"🏦 **{assureur}** *(sur {n} factures)* : {desc}.\n\n{note_txt}")
