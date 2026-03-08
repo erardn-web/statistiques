@@ -1181,6 +1181,29 @@ elif st.session_state.page == "factures":
                         total_chf = f_att["montant"].sum()
                         ouv.loc[len(ouv)] = ["TOTAL", total_nb, chf_int(round(total_chf)), ""]
                         st.table(ouv)
+
+                        # Graphique CA par âge et assureur
+                        st.markdown("---")
+                        st.subheader("CA en attente par âge et assureur")
+                        tranches = [
+                            ("0–10j",   0,  10),
+                            ("11–20j", 11,  20),
+                            ("21–30j", 21,  30),
+                            ("31–45j", 31,  45),
+                            ("46–60j", 46,  60),
+                            (">60j",   61, 9999),
+                        ]
+                        f_att2 = f_att.copy()
+                        def tranche(age):
+                            for label, lo, hi in tranches:
+                                if lo <= age <= hi:
+                                    return label
+                            return ">60j"
+                        f_att2["tranche"] = f_att2["delai_actuel"].apply(tranche)
+                        pivot = f_att2.groupby(["tranche", "assureur"])["montant"].sum().unstack(fill_value=0)
+                        ordre = [t[0] for t in tranches if t[0] in pivot.index]
+                        pivot = pivot.loc[ordre]
+                        st.bar_chart(pivot)
                     else:
                         st.info("Aucune facture ouverte.")
         except Exception as e: st.error(f"Erreur d'analyse : {e}")
