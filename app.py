@@ -1296,14 +1296,15 @@ elif st.session_state.page == "factures":
 
                                 # Note experte
                                 notes = []
-                                if p_10 >= 0.95:
-                                    notes.append("✅ Payeur très fiable — quasi aucune gestion de relance nécessaire.")
-                                elif p_10 >= 0.80:
-                                    notes.append("✅ Bon payeur — les quelques retards restent marginaux.")
-                                elif p_ret_glob >= 0.20:
-                                    notes.append("⚠️ Payeur lent — à surveiller activement.")
+                                # Classification basée sur le délai médian historique
+                                if delai_med_ass <= 15:
+                                    notes.append("⭐⭐⭐ **Très bon payeur** — règle ses factures en moins de 15 jours en général.")
+                                elif delai_med_ass <= 25:
+                                    notes.append("⭐⭐ **Bon payeur** — délai habituel entre 16 et 25 jours.")
+                                elif delai_med_ass <= 30:
+                                    notes.append("⭐ **Payeur à la dernière minute** — paie entre 25 et 30 jours, dans les délais mais sans marge.")
                                 else:
-                                    notes.append("ℹ️ Comportement de paiement dans la moyenne.")
+                                    notes.append("🔴 **Mauvais payeur** — délai médian supérieur à 30 jours. Un suivi actif est recommandé.")
 
                                 if p_ret_glob >= 0.20:
                                     notes.append("🔴 1 facture sur 5 dépasse 30 jours sur l'ensemble de l'historique — un suivi actif des impayés est recommandé.")
