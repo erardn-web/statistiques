@@ -966,7 +966,9 @@ elif st.session_state.page == "factures":
                         limit = ajd - pd.DateOffset(months=val) if val else df["date_facture"].min()
                         p_hist_sim = df[(df["date_paiement"].notna()) & (df["date_facture"] >= limit)].copy()
                         p_hist_sim["delai"] = (p_hist_sim["date_paiement"] - p_hist_sim["date_facture"]).dt.days
-                        liq, _ = calculer_liquidites_fournisseur(f_att, p_hist_sim, [jours_delta])
+                        f_att_sim = f_att.copy()
+                        f_att_sim["delai_actuel"] = (ts_effective - f_att_sim["date_facture"]).dt.days.clip(lower=0)
+                        liq, _ = calculer_liquidites_fournisseur(f_att_sim, p_hist_sim, [jours_delta])
                         res_sim.append({"Période": p_nom, "Estimation (CHF)": f"{chf_int(round(liq[jours_delta]))}"})
                     st.markdown(f"**🔮 Simulation au {ts_cible.strftime('%d.%m.%Y')}** — dans {(ts_cible - ajd).days} jour{'s' if (ts_cible - ajd).days > 1 else ''}")
                     if note_weekend:
