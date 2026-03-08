@@ -1261,6 +1261,9 @@ elif st.session_state.page == "factures":
                             p_hist_desc = df[df["date_paiement"].notna()].copy()
                             p_hist_desc["delai"] = (p_hist_desc["date_paiement"] - p_hist_desc["date_facture"]).dt.days
 
+                            # Délai moyen global — référence pour comparer
+                            delai_moyen_global = p_hist_desc["delai"].mean()
+
                             for assureur in assur_sel_age:
                                 d = p_hist_desc[p_hist_desc["assureur"] == assureur]["delai"]
                                 if len(d) < 3:
@@ -1271,15 +1274,40 @@ elif st.session_state.page == "factures":
                                 p_20  = ((d > 10) & (d <= 20)).mean()
                                 p_30  = ((d > 20) & (d <= 30)).mean()
                                 p_ret = (d > 30).mean()
+                                delai_moy_ass = d.mean()
+                                delai_med_ass = d.median()
 
+                                # Ligne factuelle
                                 parties = []
                                 if p_10  > 0.01: parties.append(f"**{round(p_10*100)}%** en moins de 10 jours")
                                 if p_20  > 0.01: parties.append(f"**{round(p_20*100)}%** entre 10 et 20 jours")
                                 if p_30  > 0.01: parties.append(f"**{round(p_30*100)}%** entre 20 et 30 jours")
                                 if p_ret > 0.01: parties.append(f"**{round(p_ret*100)}%** en retard (>30 jours)")
-
                                 desc = ", ".join(parties) if parties else "profil non établi"
-                                st.markdown(f"🏦 **{assureur}** *(sur {n} factures)* : {desc}.")
+
+                                # Note experte
+                                notes = []
+                                if p_10 >= 0.95:
+                                    notes.append("✅ Payeur très fiable — quasi aucune gestion de relance nécessaire.")
+                                elif p_10 >= 0.80:
+                                    notes.append("✅ Bon payeur — les quelques retards restent marginaux.")
+                                elif delai_moy_ass > delai_moyen_global * 1.5:
+                                    notes.append(f"⚠️ Délai moyen de {round(delai_moy_ass)} jours — significativement au-dessus de la moyenne du cabinet ({round(delai_moyen_global)} j). À surveiller.")
+                                elif delai_moy_ass > delai_moyen_global:
+                                    notes.append(f"ℹ️ Délai moyen de {round(delai_moy_ass)} jours — légèrement au-dessus de la moyenne ({round(delai_moyen_global)} j).")
+                                else:
+                                    notes.append(f"✅ Délai moyen de {round(delai_moy_ass)} jours — dans la moyenne du cabinet.")
+
+                                if p_ret >= 0.20:
+                                    notes.append(f"🔴 1 facture sur 5 dépasse 30 jours — un suivi actif des impayés est recommandé.")
+                                elif p_ret >= 0.10:
+                                    notes.append(f"🟡 Taux de retard de {round(p_ret*100)}% — quelques dossiers méritent un suivi ponctuel.")
+
+                                if delai_med_ass < delai_moy_ass * 0.7:
+                                    notes.append(f"ℹ️ Médiane à {round(delai_med_ass)} j vs moyenne à {round(delai_moy_ass)} j — quelques factures très tardives tirent la moyenne vers le haut.")
+
+                                note_txt = " ".join(notes)
+                                st.markdown(f"🏦 **{assureur}** *(sur {n} factures)* : {desc}.\n\n{note_txt}")
                     else:
                         st.info("Aucune facture ouverte.")
         except Exception as e: st.error(f"Erreur d'analyse : {e}")
