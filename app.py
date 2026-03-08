@@ -977,7 +977,7 @@ elif st.session_state.page == "factures":
                     st.markdown(f"<table style='background:#D6EAF8;border-collapse:collapse;width:auto;font-size:0.9rem;'><thead><tr>{headers_html}</tr></thead><tbody>{rows_html}</tbody></table>", unsafe_allow_html=True)
 
             if st.session_state.analyse_lancee:
-                tab1, tab_open, tab2, tab3, tab4 = st.tabs(["💰 Liquidités", "📋 Factures ouvertes", "🕒 Délais", "⚠️ Retards", "📈 Évolution"])
+                tab1, tab_open, tab_age, tab2, tab3, tab4 = st.tabs(["💰 Liquidités", "📋 Factures ouvertes", "📊 Âge des factures", "🕒 Délais", "⚠️ Retards", "📈 Évolution"])
                 with tab2:
                     col_opt1, col_opt2, _ = st.columns([1, 1, 3])
                     show_med = col_opt1.checkbox("Médiane", value=True, key="show_med")
@@ -1181,50 +1181,77 @@ elif st.session_state.page == "factures":
                         total_chf = f_att["montant"].sum()
                         ouv.loc[len(ouv)] = ["TOTAL", total_nb, chf_int(round(total_chf)), ""]
                         st.table(ouv)
+                    else:
+                        st.info("Aucune facture ouverte.")
 
-                        # Graphique CA par âge et assureur
-                        st.markdown("---")
-                        st.subheader("CA en attente par âge et assureur")
+                with tab_age:
+                    if not f_att.empty:
+                        import plotly.graph_objects as go
+
                         tranches = [
-                            ("0–10j",   0,  10),
-                            ("11–20j", 11,  20),
-                            ("21–30j", 21,  30),
-                            ("31–45j", 31,  45),
-                            ("46–60j", 46,  60),
                             (">60j",   61, 9999),
+                            ("46–60j", 46,  60),
+                            ("31–45j", 31,  45),
+                            ("21–30j", 21,  30),
+                            ("11–20j", 11,  20),
+                            ("0–10j",   0,  10),
                         ]
-                        f_att2 = f_att.copy()
                         def tranche(age):
                             for label, lo, hi in tranches:
                                 if lo <= age <= hi:
                                     return label
                             return ">60j"
+
+                        f_att2 = f_att.copy()
                         f_att2["tranche"] = f_att2["delai_actuel"].apply(tranche)
+
+                        # Contrôles
+                        col_type, col_top, col_spacer = st.columns([1, 1, 3])
+                        chart_type = col_type.selectbox("Type", ["Colonnes", "Courbes"], key="age_chart_type")
+                        top_opt = col_top.selectbox("Assureurs", ["Top 5", "Top 10", "Top 20", "Tous"], key="age_top")
+                        top_n = {"Top 5": 5, "Top 10": 10, "Top 20": 20, "Tous": None}[top_opt]
+
+                        # Ranking assureurs par CA total ouvert
+                        ranking = f_att2.groupby("assureur")["montant"].sum().sort_values(ascending=False)
+                        assureurs_top = ranking.index.tolist()[:top_n] if top_n else ranking.index.tolist()
+
                         pivot = f_att2.groupby(["tranche", "assureur"])["montant"].sum().unstack(fill_value=0)
                         ordre = [t[0] for t in tranches if t[0] in pivot.index]
                         pivot = pivot.loc[ordre]
+                        # Garder seulement les assureurs du top
+                        cols_present = [a for a in assureurs_top if a in pivot.columns]
+                        pivot = pivot[cols_present]
 
-                        import matplotlib
-                        matplotlib.use('Agg')
-                        import matplotlib.pyplot as plt
-                        fig, ax = plt.subplots(figsize=(12, 5))
-                        bottom = [0] * len(pivot)
-                        colors_list = plt.cm.tab20.colors
+                        fig = go.Figure()
+                        colors = go.Figure().layout.template.layout.colorway or [
+                            '#636EFA','#EF553B','#00CC96','#AB63FA','#FFA15A',
+                            '#19D3F3','#FF6692','#B6E880','#FF97FF','#FECB52'
+                        ]
                         for i, assureur in enumerate(pivot.columns):
                             vals = pivot[assureur].values
-                            ax.bar(pivot.index, vals, bottom=bottom, label=assureur,
-                                   color=colors_list[i % len(colors_list)], edgecolor='white', linewidth=0.5)
-                            bottom = [b + v for b, v in zip(bottom, vals)]
-                        ax.set_title("CA en attente par âge et assureur", fontsize=13, fontweight='bold')
-                        ax.set_xlabel("Tranche d'âge", fontsize=10)
-                        ax.set_ylabel("CA (CHF)", fontsize=10)
-                        ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: chf_int(x)))
-                        ax.legend(loc='upper right', fontsize=8, ncol=2)
-                        ax.grid(axis='y', linestyle='--', alpha=0.4)
-                        plt.xticks(fontsize=9)
-                        plt.tight_layout()
-                        st.pyplot(fig)
-                        plt.close(fig)
+                            color = colors[i % len(colors)]
+                            if chart_type == "Colonnes":
+                                fig.add_trace(go.Bar(
+                                    name=assureur, x=pivot.index, y=vals,
+                                    marker_color=color
+                                ))
+                            else:
+                                fig.add_trace(go.Scatter(
+                                    name=assureur, x=pivot.index, y=vals,
+                                    mode='lines+markers', line=dict(color=color, width=2),
+                                    marker=dict(size=7)
+                                ))
+
+                        fig.update_layout(
+                            barmode='stack' if chart_type == "Colonnes" else None,
+                            xaxis_title="Tranche d'âge",
+                            yaxis_title="CA (CHF)",
+                            yaxis=dict(tickformat=",.0f"),
+                            legend=dict(orientation="v", x=1.01, y=1),
+                            height=480,
+                            margin=dict(l=60, r=20, t=30, b=40),
+                        )
+                        st.plotly_chart(fig, use_container_width=True)
                     else:
                         st.info("Aucune facture ouverte.")
         except Exception as e: st.error(f"Erreur d'analyse : {e}")
