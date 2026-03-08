@@ -1296,12 +1296,13 @@ elif st.session_state.page == "factures":
 
                                 # Note experte
                                 notes = []
-                                # Classification basée sur le délai médian historique
-                                if delai_med_ass <= 15:
+                                # Classification basée sur le délai médian des 2 derniers mois
+                                delai_med_recent = d.median() if len(d) >= 3 else delai_med_ass
+                                if delai_med_recent <= 15:
                                     notes.append("⭐⭐⭐ **Très bon payeur** — règle ses factures en moins de 15 jours en général.")
-                                elif delai_med_ass <= 25:
+                                elif delai_med_recent <= 25:
                                     notes.append("⭐⭐ **Bon payeur** — délai habituel entre 16 et 25 jours.")
-                                elif delai_med_ass <= 30:
+                                elif delai_med_recent <= 30:
                                     notes.append("⭐ **Payeur à la dernière minute** — paie entre 25 et 30 jours, dans les délais mais sans marge.")
                                 else:
                                     notes.append("🔴 **Mauvais payeur** — délai médian supérieur à 30 jours. Un suivi actif est recommandé.")
