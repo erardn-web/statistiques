@@ -1189,12 +1189,16 @@ elif st.session_state.page == "factures":
                         import plotly.graph_objects as go
 
                         tranches = [
-                            (">60j",   61, 9999),
-                            ("46–60j", 46,  60),
-                            ("31–45j", 31,  45),
-                            ("21–30j", 21,  30),
-                            ("11–20j", 11,  20),
-                            ("0–10j",   0,  10),
+                            (">45j",  46, 9999),
+                            ("41–45j",41,  45),
+                            ("36–40j",36,  40),
+                            ("31–35j",31,  35),
+                            ("26–30j",26,  30),
+                            ("21–25j",21,  25),
+                            ("16–20j",16,  20),
+                            ("11–15j",11,  15),
+                            ("6–10j",  6,  10),
+                            ("0–5j",   0,   5),
                         ]
                         def tranche_age(age):
                             for label, lo, hi in tranches:
@@ -1218,7 +1222,7 @@ elif st.session_state.page == "factures":
                             "Sélectionner les assureurs :",
                             options=tous_assureurs_age,
                             default=defaut_age,
-                            key="age_assur_sel"
+                            key=f"age_assur_sel_{top_opt}"
                         )
 
                         if assur_sel_age:
