@@ -1315,6 +1315,32 @@ elif st.session_state.page == "factures":
                                 if len(d_glob) >= 3 and delai_med_ass < delai_moy_ass * 0.7:
                                     notes.append(f"ℹ️ Médiane historique à {round(delai_med_ass)} j vs moyenne à {round(delai_moy_ass)} j — quelques factures très tardives tirent la moyenne vers le haut.")
 
+                                # Tendance : comparer 2 derniers mois vs période précédente
+                                date_2m = ajd - pd.DateOffset(months=2)
+                                date_4m = ajd - pd.DateOffset(months=4)
+                                d_recent = p_hist_global[
+                                    (p_hist_global["assureur"] == assureur) &
+                                    (p_hist_global["date_facture"] >= date_2m)
+                                ]["delai"]
+                                d_ancien = p_hist_global[
+                                    (p_hist_global["assureur"] == assureur) &
+                                    (p_hist_global["date_facture"] >= date_4m) &
+                                    (p_hist_global["date_facture"] < date_2m)
+                                ]["delai"]
+                                if len(d_recent) >= 5 and len(d_ancien) >= 5:
+                                    delta = d_recent.mean() - d_ancien.mean()
+                                    delta_ret = (d_recent > 30).mean() - (d_ancien > 30).mean()
+                                    if delta <= -5 and delta_ret <= -0.05:
+                                        notes.append(f"📈 Nette amélioration récente : délai moyen passé de {round(d_ancien.mean())} j à {round(d_recent.mean())} j sur les 2 derniers mois, avec moins de retards.")
+                                    elif delta <= -3:
+                                        notes.append(f"📈 Légère amélioration récente : délai moyen passé de {round(d_ancien.mean())} j à {round(d_recent.mean())} j.")
+                                    elif delta >= 5 and delta_ret >= 0.05:
+                                        notes.append(f"📉 Détérioration récente : délai moyen passé de {round(d_ancien.mean())} j à {round(d_recent.mean())} j sur les 2 derniers mois, avec davantage de retards. À surveiller.")
+                                    elif delta >= 3:
+                                        notes.append(f"📉 Légère détérioration récente : délai moyen passé de {round(d_ancien.mean())} j à {round(d_recent.mean())} j.")
+                                    else:
+                                        notes.append(f"➡️ Comportement stable sur les 4 derniers mois (délai moyen : {round(d_recent.mean())} j).")
+
                                 note_txt = " ".join(notes)
                                 st.markdown(f"🏦 **{assureur}** *(sur {n} factures)* : {desc}.\n\n{note_txt}")
                     else:
