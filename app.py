@@ -1196,62 +1196,99 @@ elif st.session_state.page == "factures":
                             ("11–20j", 11,  20),
                             ("0–10j",   0,  10),
                         ]
-                        def tranche(age):
+                        def tranche_age(age):
                             for label, lo, hi in tranches:
                                 if lo <= age <= hi:
                                     return label
                             return ">60j"
 
                         f_att2 = f_att.copy()
-                        f_att2["tranche"] = f_att2["delai_actuel"].apply(tranche)
+                        f_att2["tranche"] = f_att2["delai_actuel"].apply(tranche_age)
 
-                        # Contrôles
+                        ranking = f_att2.groupby("assureur")["montant"].sum().sort_values(ascending=False)
+                        tous_assureurs_age = ranking.index.tolist()
+
                         col_type, col_top, col_spacer = st.columns([1, 1, 3])
                         chart_type = col_type.selectbox("Type", ["Colonnes", "Courbes"], key="age_chart_type")
-                        top_opt = col_top.selectbox("Assureurs", ["Top 5", "Top 10", "Top 20", "Tous"], key="age_top")
+                        top_opt = col_top.selectbox("Présélection", ["Top 5", "Top 10", "Top 20", "Tous"], key="age_top")
                         top_n = {"Top 5": 5, "Top 10": 10, "Top 20": 20, "Tous": None}[top_opt]
+                        defaut_age = tous_assureurs_age[:top_n] if top_n else tous_assureurs_age
 
-                        # Ranking assureurs par CA total ouvert
-                        ranking = f_att2.groupby("assureur")["montant"].sum().sort_values(ascending=False)
-                        assureurs_top = ranking.index.tolist()[:top_n] if top_n else ranking.index.tolist()
-
-                        pivot = f_att2.groupby(["tranche", "assureur"])["montant"].sum().unstack(fill_value=0)
-                        ordre = [t[0] for t in tranches if t[0] in pivot.index]
-                        pivot = pivot.loc[ordre]
-                        # Garder seulement les assureurs du top
-                        cols_present = [a for a in assureurs_top if a in pivot.columns]
-                        pivot = pivot[cols_present]
-
-                        fig = go.Figure()
-                        colors = go.Figure().layout.template.layout.colorway or [
-                            '#636EFA','#EF553B','#00CC96','#AB63FA','#FFA15A',
-                            '#19D3F3','#FF6692','#B6E880','#FF97FF','#FECB52'
-                        ]
-                        for i, assureur in enumerate(pivot.columns):
-                            vals = pivot[assureur].values
-                            color = colors[i % len(colors)]
-                            if chart_type == "Colonnes":
-                                fig.add_trace(go.Bar(
-                                    name=assureur, x=pivot.index, y=vals,
-                                    marker_color=color
-                                ))
-                            else:
-                                fig.add_trace(go.Scatter(
-                                    name=assureur, x=pivot.index, y=vals,
-                                    mode='lines+markers', line=dict(color=color, width=2),
-                                    marker=dict(size=7)
-                                ))
-
-                        fig.update_layout(
-                            barmode='stack' if chart_type == "Colonnes" else None,
-                            xaxis_title="Tranche d'âge",
-                            yaxis_title="CA (CHF)",
-                            yaxis=dict(tickformat=",.0f"),
-                            legend=dict(orientation="v", x=1.01, y=1),
-                            height=480,
-                            margin=dict(l=60, r=20, t=30, b=40),
+                        assur_sel_age = st.multiselect(
+                            "Sélectionner les assureurs :",
+                            options=tous_assureurs_age,
+                            default=defaut_age,
+                            key="age_assur_sel"
                         )
-                        st.plotly_chart(fig, use_container_width=True)
+
+                        if assur_sel_age:
+                            pivot = f_att2.groupby(["tranche", "assureur"])["montant"].sum().unstack(fill_value=0)
+                            ordre = [t[0] for t in tranches if t[0] in pivot.index]
+                            pivot = pivot.loc[ordre]
+                            cols_present = [a for a in assur_sel_age if a in pivot.columns]
+                            pivot = pivot[cols_present]
+
+                            fig = go.Figure()
+                            colors = ['#636EFA','#EF553B','#00CC96','#AB63FA','#FFA15A',
+                                      '#19D3F3','#FF6692','#B6E880','#FF97FF','#FECB52']
+                            for i, assureur in enumerate(pivot.columns):
+                                vals = pivot[assureur].values
+                                color = colors[i % len(colors)]
+                                if chart_type == "Colonnes":
+                                    fig.add_trace(go.Bar(name=assureur, x=list(pivot.index), y=list(vals), marker_color=color))
+                                else:
+                                    fig.add_trace(go.Scatter(name=assureur, x=list(pivot.index), y=list(vals),
+                                        mode='lines+markers', line=dict(color=color, width=2), marker=dict(size=7)))
+
+                            fig.update_layout(
+                                barmode='stack' if chart_type == "Colonnes" else None,
+                                xaxis_title="Tranche d'âge",
+                                yaxis_title="CA (CHF)",
+                                yaxis=dict(tickformat=",.0f"),
+                                legend=dict(orientation="v", x=1.01, y=1),
+                                height=480,
+                                margin=dict(l=60, r=20, t=30, b=40),
+                            )
+                            st.plotly_chart(fig, use_container_width=True)
+
+                            # Descriptions textuelles
+                            st.markdown("---")
+                            st.subheader("Profil de paiement par assureur")
+                            p_hist_desc = df[df["date_paiement"].notna()].copy()
+                            p_hist_desc["delai"] = (p_hist_desc["date_paiement"] - p_hist_desc["date_facture"]).dt.days
+                            seuils = [10, 20, 30, 45, 60]
+
+                            for assureur in assur_sel_age:
+                                d = p_hist_desc[p_hist_desc["assureur"] == assureur]["delai"]
+                                if len(d) < 3:
+                                    st.markdown(f"**{assureur}** — historique insuffisant pour établir un profil.")
+                                    continue
+                                pcts = {s: (d <= s).mean() for s in seuils}
+                                phrases = []
+                                if pcts[10] >= 0.99:
+                                    phrases.append("paie la quasi-totalité de ses factures en moins de 10 jours")
+                                else:
+                                    for i, s in enumerate(seuils):
+                                        p = pcts[s]
+                                        p_prev = pcts[seuils[i-1]] if i > 0 else 0.0
+                                        if p >= 0.80 and p_prev < 0.80:
+                                            phrases.append(f"paie {round(p*100)}% de ses factures en moins de {s} jours")
+                                            break
+                                    if pcts[10] < 0.02:
+                                        phrases.append("ne paie jamais en moins de 10 jours")
+                                    elif pcts[20] < 0.02:
+                                        phrases.append("ne paie presque jamais en moins de 20 jours")
+                                    retard_45 = 1 - pcts[30]
+                                    retard_60 = 1 - pcts[45]
+                                    if retard_60 >= 0.05:
+                                        phrases.append(f"{round(retard_60*100)}% sont payées avec plus de 45 jours de délai")
+                                    elif retard_45 >= 0.05:
+                                        phrases.append(f"{round(retard_45*100)}% sont payées entre 30 et 45 jours")
+                                    seuil_qt = next((s for s in seuils if pcts[s] >= 0.99), None)
+                                    if seuil_qt:
+                                        phrases.append(f"mais paie la quasi-totalité en moins de {seuil_qt} jours")
+                                desc = " — ".join(phrases) if phrases else "profil de paiement variable"
+                                st.markdown(f"🏦 **{assureur}** : {desc}.")
                     else:
                         st.info("Aucune facture ouverte.")
         except Exception as e: st.error(f"Erreur d'analyse : {e}")
