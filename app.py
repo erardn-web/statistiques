@@ -1341,8 +1341,10 @@ elif st.session_state.page == "factures":
                                     else:
                                         notes.append(f"➡️ Comportement stable sur les 4 derniers mois (délai moyen : {round(d_recent.mean())} j).")
 
-                                note_txt = " ".join(notes)
-                                st.markdown(f"🏦 **{assureur}** *(sur {n} factures)* : {desc}.\n\n{note_txt}")
+                                st.markdown(f"🏦 **{assureur}** *(sur {n} factures)* : {desc}.")
+                                for note in notes:
+                                    st.markdown(note)
+                                st.markdown("---")
                     else:
                         st.info("Aucune facture ouverte.")
         except Exception as e: st.error(f"Erreur d'analyse : {e}")
