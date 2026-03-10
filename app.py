@@ -293,34 +293,23 @@ def calculer_liquidites_fournisseur(f_attente, p_hist, jours_horizons):
     """Calcul de probabilité de paiement pour le module Facturation.
     3 niveaux de granularité : assureur×fournisseur → fournisseur → global.
 
-    Probabilité cumulative tenant compte de l'âge de chaque facture :
-      P(payée d'ici h jours) = P(delai ≤ age + h)
-    Une vieille facture à large horizon → seuil élevé → probabilité proche de 1.
-    Une jeune facture à court horizon → seuil bas → probabilité faible si l'assureur paie tard.
+    Pour chaque facture ouverte, on multiplie son montant par la probabilité
+    que cette assurance (pour ce fournisseur) paie en moins de h jours :
+      P(delai ≤ h) calculé sur l'historique assureur×fournisseur.
+    Simple, lisible et vérifiable.
     """
     liq = {h: 0.0 for h in jours_horizons}
     taux_glob = {h: 0.0 for h in jours_horizons}
     if p_hist.empty: return liq, taux_glob
 
-    import numpy as np
-    delais_croises = p_hist.groupby(["assureur", "fournisseur"])["delai"].apply(np.array).to_dict()
-    delais_fourn   = p_hist.groupby("fournisseur")["delai"].apply(np.array).to_dict()
-    delais_global  = p_hist["delai"].values
-
     for h in jours_horizons:
-        taux_glob[h] = (delais_global <= h).mean()
+        stats_croisees = p_hist.groupby(["assureur", "fournisseur"])["delai"].apply(lambda x: (x <= h).mean()).to_dict()
+        stats_fourn    = p_hist.groupby("fournisseur")["delai"].apply(lambda x: (x <= h).mean()).to_dict()
+        taux_glob[h]   = (p_hist["delai"] <= h).mean()
         total_h = 0.0
         for _, row in f_attente.iterrows():
-            age = int(row.get("delai_actuel", 0))
-            seuil = age + h
-            key = (row["assureur"], row["fournisseur"])
-            if key in delais_croises:
-                d = delais_croises[key]
-            elif row["fournisseur"] in delais_fourn:
-                d = delais_fourn[row["fournisseur"]]
-            else:
-                d = delais_global
-            prob = (d <= seuil).mean()
+            key  = (row["assureur"], row["fournisseur"])
+            prob = stats_croisees.get(key, stats_fourn.get(row["fournisseur"], taux_glob[h]))
             total_h += row["montant"] * prob
         liq[h] = total_h
     return liq, taux_glob
