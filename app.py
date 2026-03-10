@@ -948,6 +948,12 @@ elif st.session_state.page == "factures":
             f_att["delai_actuel"] = (ajd - f_att["date_facture"]).dt.days
             st.metric("💰 TOTAL BRUT EN ATTENTE", f"{chf(f_att['montant'].sum())} CHF")
 
+            # Facteur pessimiste : exclure les factures > 35 jours des projections de liquidités
+            f_att_liq = f_att[f_att["delai_actuel"] <= 35].copy()
+            f_att_old = f_att[f_att["delai_actuel"] > 35].copy()
+            if not f_att_old.empty:
+                st.caption(f"⚠️ {len(f_att_old)} facture(s) de plus de 35 jours exclues des projections ({chf_int(round(f_att_old['montant'].sum()))} CHF) — à traiter manuellement.")
+
             if btn_simuler:
                 ts_cible = pd.Timestamp(date_cible)
                 jour_semaine = ts_cible.weekday()
@@ -968,7 +974,7 @@ elif st.session_state.page == "factures":
                         limit = ajd - pd.DateOffset(months=val) if val else df["date_facture"].min()
                         p_hist_sim = df[(df["date_paiement"].notna()) & (df["date_facture"] >= limit)].copy()
                         p_hist_sim["delai"] = (p_hist_sim["date_paiement"] - p_hist_sim["date_facture"]).dt.days
-                        liq, _ = calculer_liquidites_fournisseur(f_att, p_hist_sim, [jours_delta])
+                        liq, _ = calculer_liquidites_fournisseur(f_att_liq, p_hist_sim, [jours_delta])
                         res_sim.append({"Période": p_nom, "Estimation (CHF)": f"{chf_int(round(liq[jours_delta]))}"})
                     st.markdown(f"**🔮 Simulation au {ts_cible.strftime('%d.%m.%Y')}** — dans {(ts_cible - ajd).days} jour{'s' if (ts_cible - ajd).days > 1 else ''}")
                     if note_weekend:
@@ -993,7 +999,7 @@ elif st.session_state.page == "factures":
                     with tab1:
                         st.subheader(f"Liquidités : {p_name}")
                         horizons = [10, 20, 30]
-                        liq, t = calculer_liquidites_fournisseur(f_att, p_hist, horizons)
+                        liq, t = calculer_liquidites_fournisseur(f_att_liq, p_hist, horizons)
                         st.table(pd.DataFrame({"Horizon": [f"Sous {h}j" for h in horizons], "Estimation (CHF)": [f"{chf_int(round(liq[h]))}" for h in horizons]}))
                     with tab2:
                         st.subheader(f"Délais par assureur ({p_name})")
