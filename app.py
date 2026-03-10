@@ -1582,8 +1582,12 @@ elif st.session_state.page == "medecins":
                 with c3: visibility = st.radio("Option Tendance :", ["Données", "Ligne", "Les deux"], index=0, horizontal=True)
 
                 tab_s = tab_final.sort_values("CA Global", ascending=False)
+                # S'assurer que les médecins sont tous des strings
+                tab_final["medecin"] = tab_final["medecin"].astype(str)
+                tab_s["medecin"] = tab_s["medecin"].astype(str)
                 def_sel = tab_s["medecin"].tolist() if m_top == "Tout" else tab_s.head(int(m_top))["medecin"].tolist()
-                choix = st.multiselect("Sélection :", options=sorted(tab_final["medecin"].unique()), default=def_sel)
+                options_med = sorted(tab_final["medecin"].astype(str).unique().tolist(), key=lambda x: x.lower())
+                choix = st.multiselect("Sélection :", options=options_med, default=def_sel)
 
                 if choix:
                     df_p = df_m_graph[df_m_graph["medecin"].isin(choix)].copy()
