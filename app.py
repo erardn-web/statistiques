@@ -1582,16 +1582,15 @@ elif st.session_state.page == "medecins":
                 with c2: t_graph = st.radio("Style :", ["📊 Barres", "📈 Courbes"], horizontal=True)
                 with c3: visibility = st.radio("Option Tendance :", ["Données", "Ligne", "Les deux"], index=0, horizontal=True)
 
-                tab_s = tab_final.sort_values("CA Global", ascending=False)
-                # S'assurer que les médecins sont tous des strings
+                tab_s = tab_final[tab_final["medecin"] != "Sans médecin"].sort_values("CA Global", ascending=False)
                 tab_final["medecin"] = tab_final["medecin"].astype(str)
                 tab_s["medecin"] = tab_s["medecin"].astype(str)
                 def_sel = tab_s["medecin"].tolist() if m_top == "Tout" else tab_s.head(int(m_top))["medecin"].tolist()
-                options_med = sorted(tab_final["medecin"].astype(str).unique().tolist(), key=lambda x: x.lower())
+                options_med = sorted(tab_final[tab_final["medecin"] != "Sans médecin"]["medecin"].astype(str).unique().tolist(), key=lambda x: x.lower())
                 choix = st.multiselect("Sélection :", options=options_med, default=def_sel)
 
                 if choix:
-                    df_p = df_m_graph[df_m_graph["medecin"].isin(choix)].copy()
+                    df_p = df_m_graph[(df_m_graph["medecin"].isin(choix)) & (df_m_graph["medecin"] != "Sans médecin")].copy()
                     df_p["M_Date"] = df_p["date_f"].dt.to_period("M").dt.to_timestamp()
                     df_p = df_p.groupby(["M_Date", "medecin"])["ca"].sum().reset_index()
                     base = alt.Chart(df_p).encode(
