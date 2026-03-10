@@ -1083,6 +1083,7 @@ elif st.session_state.page == "factures":
                         with col_top:
                             top_choix = st.selectbox("Afficher :", list(options_top.keys()), index=0, key="evol_top")
                         nb_top = options_top[top_choix]
+                        # Ranking basé sur le CA dans df_pv (assureurs ayant des données)
                         assureurs_disponibles = [a for a in tous_assureurs if a in df_pv.index]
                         defaut_sel = assureurs_disponibles[:nb_top] if nb_top else assureurs_disponibles
 
@@ -1100,7 +1101,31 @@ elif st.session_state.page == "factures":
                             df_plot = df_pv.loc[assur_sel].T
                             df_plot.index = pd.CategoricalIndex(df_plot.index, categories=ordre_chrono, ordered=True)
                             df_plot_sorted = df_plot.sort_index()
-                            st.line_chart(df_plot_sorted)
+
+                            import plotly.graph_objects as go
+                            fig_ev = go.Figure()
+                            colors_ev = ['#636EFA','#EF553B','#00CC96','#AB63FA','#FFA15A',
+                                         '#19D3F3','#FF6692','#B6E880','#FF97FF','#FECB52']
+                            for i, assureur in enumerate(df_plot_sorted.columns):
+                                vals = df_plot_sorted[assureur]
+                                # Exclure les NaN — ne pas afficher comme 0
+                                x_vals = [str(x) for x, v in zip(vals.index, vals) if pd.notna(v)]
+                                y_vals = [v for v in vals if pd.notna(v)]
+                                fig_ev.add_trace(go.Scatter(
+                                    name=str(assureur), x=x_vals, y=y_vals,
+                                    mode='lines+markers',
+                                    line=dict(color=colors_ev[i % len(colors_ev)], width=2),
+                                    marker=dict(size=7),
+                                    connectgaps=False
+                                ))
+                            fig_ev.update_layout(
+                                xaxis_title="Période",
+                                yaxis_title="Délai moyen (jours)",
+                                legend=dict(orientation="v", x=1.01, y=1),
+                                height=450,
+                                margin=dict(l=60, r=20, t=30, b=40),
+                            )
+                            st.plotly_chart(fig_ev, use_container_width=True)
                             st.dataframe(df_pv.loc[assur_sel].style.highlight_max(axis=1, color='#ff9999').highlight_min(axis=1, color='#99ff99'))
                             try:
                                 # PDF combiné : graphique + tableau
