@@ -1531,6 +1531,7 @@ elif st.session_state.page == "medecins":
             # Appliquer le mapping de la config cabinet (variantes → nom canonique)
             if st.session_state.config_medecins:
                 df_m["medecin"] = df_m["medecin"].replace(st.session_state.config_medecins)
+                df_m_graph["medecin"] = df_m_graph["medecin"].replace(st.session_state.config_medecins)
                 nb_mapped = df_m["medecin"].isin(st.session_state.config_medecins.values()).sum()
                 if nb_mapped > 0:
                     st.caption(f"✅ Config cabinet active — {len(st.session_state.config_medecins)} variantes mappées")
