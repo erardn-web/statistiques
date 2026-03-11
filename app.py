@@ -2365,6 +2365,7 @@ elif st.session_state.page == "pos7350":
             cas_36     = []
             cas_6mois  = []
             cas_manuel = []
+            cas_jamais = []  # patients actifs sans aucun 7350 dans l'export
 
             for pat in tous_patients:
                 bilans_bruts = sorted(df_7350[df_7350["patient"] == pat]["date"].tolist())
@@ -2444,11 +2445,33 @@ elif st.session_state.page == "pos7350":
                             "7350 facturable depuis":    date_facturable.strftime("%d.%m.%Y"),
                         })
 
+                    # Jamais de 7350 dans l'export pour ce cas
+                    if dernier_bilan is None:
+                        premiere_seance = seances_pos[0]
+                        anciennete_jours = (ajd - premiere_seance).days
+                        if anciennete_jours >= 14:  # au moins 2 semaines de recul
+                            if anciennete_jours >= 90:
+                                fiabilite = "🔴 Très probable"
+                            elif anciennete_jours >= 30:
+                                fiabilite = "🟠 Probable"
+                            else:
+                                fiabilite = "🟡 Incertain (export court)"
+                            cas_jamais.append({
+                                "Patient":           pat,
+                                "Position":          position,
+                                "1ère séance export": premiere_seance.strftime("%d.%m.%Y"),
+                                "Dernière séance":   derniere_seance.strftime("%d.%m.%Y"),
+                                "Nb séances":        len(seances_pos),
+                                "Ancienneté (jours)": anciennete_jours,
+                                "Fiabilité":         fiabilite,
+                            })
+
             # Métriques
-            c1, c2, c3 = st.columns(3)
+            c1, c2, c3, c4 = st.columns(4)
             c1.metric("🟢 Critère 36 séances", len(cas_36))
             c2.metric("🟢 Critère 6 mois", len(cas_6mois))
             c3.metric("🔍 À analyser manuellement", len(cas_manuel))
+            c4.metric("⚠️ Jamais de 7350", len(cas_jamais))
 
             st.caption("⚠️ Si un patient a plusieurs cas actifs (ex: épaule + pied), les séances sont comptées ensemble — le module peut sous-estimer les opportunités.")
 
@@ -2485,6 +2508,22 @@ elif st.session_state.page == "pos7350":
                     use_container_width=True, hide_index=True)
             else:
                 st.info("Aucun cas de reprise détecté.")
+
+            st.markdown("---")
+
+            # --- Tableau jamais facturé ---
+            st.subheader("⚠️ Patients actifs sans aucun 7350 dans l'export")
+            st.caption(
+                "La fiabilité dépend de la période couverte par l'export : "
+                "🔴 **Très probable** = 1ère séance > 90j · "
+                "🟠 **Probable** = 30–90j · "
+                "🟡 **Incertain** = < 30j (le 7350 a peut-être été facturé avant la période de l'export)."
+            )
+            if cas_jamais:
+                df_jamais = pd.DataFrame(cas_jamais).sort_values("Ancienneté (jours)", ascending=False)
+                st.dataframe(df_jamais, use_container_width=True, hide_index=True)
+            else:
+                st.info("Aucun patient actif sans 7350 détecté dans l'export.")
 
         except Exception as e:
             st.error(f"❌ Erreur : {e}")
