@@ -2450,7 +2450,7 @@ elif st.session_state.page == "pos7350":
                             "Jours depuis dernier 7350": jours_depuis,
                             "Dernière séance":           derniere_seance.strftime("%d.%m.%Y"),
                             "Dernier 7350":              dernier_bilan.strftime("%d.%m.%Y"),
-                            "7350 facturable depuis":    date_facturable.strftime("%d.%m.%Y"),
+                            "7350 facturable depuis":    (dernier_bilan + pd.DateOffset(days=183)).strftime("%d.%m.%Y"),
                         })
 
                     # Jamais de 7350 dans l'export pour ce cas
