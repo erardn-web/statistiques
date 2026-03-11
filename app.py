@@ -2467,7 +2467,10 @@ elif st.session_state.page == "pos7350":
             # --- Tableau 6 mois ---
             st.subheader("🟢 Critère : 6 mois écoulés depuis le dernier 7350")
             if cas_6mois:
-                st.dataframe(pd.DataFrame(cas_6mois).sort_values("Jours depuis dernier 7350", ascending=False),
+                df_6mois = pd.DataFrame(cas_6mois)
+                df_6mois["_sort"] = pd.to_numeric(df_6mois["Jours depuis dernier 7350"], errors="coerce")
+                df_6mois = df_6mois.sort_values("_sort", ascending=False).drop(columns=["_sort"])
+                st.dataframe(df_6mois,
                     use_container_width=True, hide_index=True)
             else:
                 st.info("Aucun patient n'a atteint 6 mois depuis son dernier 7350.")
