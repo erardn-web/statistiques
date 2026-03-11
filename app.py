@@ -2483,90 +2483,83 @@ elif st.session_state.page == "pos7350":
 
             st.caption("⚠️ Si un patient a plusieurs cas actifs (ex: épaule + pied), les séances sont comptées ensemble — le module peut sous-estimer les opportunités.")
 
-            st.markdown("---")
-
-            # --- Tableau 36 séances ---
-            st.subheader("🟢 Critère : 36 séances 7301/7311 atteintes")
-            if cas_36:
-                st.dataframe(pd.DataFrame(cas_36).sort_values("Séances depuis 7350", ascending=False),
-                    use_container_width=True, hide_index=True)
-            else:
-                st.info("Aucun patient n'a atteint 36 séances depuis son dernier 7350.")
-
-            st.markdown("---")
-
-            # --- Tableau 6 mois ---
-            st.subheader("🟢 Critère : 6 mois écoulés depuis le dernier 7350")
-            if cas_6mois:
-                df_6mois = pd.DataFrame(cas_6mois)
-                df_6mois["_sort"] = pd.to_numeric(df_6mois["Jours depuis dernier 7350"], errors="coerce")
-                df_6mois = df_6mois.sort_values("_sort", ascending=False).drop(columns=["_sort"])
-                st.dataframe(df_6mois,
-                    use_container_width=True, hide_index=True)
-            else:
-                st.info("Aucun patient n'a atteint 6 mois depuis son dernier 7350.")
-
-            st.markdown("---")
-
-            # --- Tableau manuel ---
-            st.subheader("🔍 À analyser manuellement — reprise après pause")
-            st.caption("Ces patients ont eu une interruption de traitement et sont revenus. Vérifier s'il s'agit d'un nouveau cas (nouveau 7350 possible dès la 1ère séance).")
-            if cas_manuel:
-                st.dataframe(pd.DataFrame(cas_manuel),
-                    use_container_width=True, hide_index=True)
-            else:
-                st.info("Aucun cas de reprise détecté.")
-
-            st.markdown("---")
-
-            # --- Tableau jamais facturé ---
-            st.subheader("⚠️ Patients actifs sans aucun 7350 dans l'export")
-            st.caption(
-                "La fiabilité dépend de la période couverte par l'export : "
-                "🔴 **Très probable** = 1ère séance > 90j · "
-                "🟠 **Probable** = 30–90j · "
-                "🟡 **Incertain** = < 30j (le 7350 a peut-être été facturé avant la période de l'export)."
-            )
-            if cas_jamais:
-                df_jamais = pd.DataFrame(cas_jamais).sort_values("Ancienneté (jours)", ascending=False)
-                st.dataframe(df_jamais, use_container_width=True, hide_index=True)
-            else:
-                st.info("Aucun patient actif sans 7350 détecté dans l'export.")
-
-            st.markdown("---")
-
-            # --- Erreurs de facturation : 7301 + 7311 dans la même facture ---
-            st.subheader("🚨 Erreurs de facturation — 7301 et 7311 sur la même facture")
-            st.caption("Un patient ne peut pas avoir les deux codes dans la même facture. Chaque code correspond à un cas distinct et doit être sur une facture séparée.")
-
-            # Détecter les factures mixtes sur df_raw (inclut toutes positions)
+            # --- Calcul erreurs facturation (pour le compteur d'onglet) ---
             df_mix = df_raw.copy()
             has_7301_num = set(df_mix[df_mix["tarif"] == "7301"]["num_facture"].unique())
             has_7311_num = set(df_mix[df_mix["tarif"] == "7311"]["num_facture"].unique())
             nums_erreur  = has_7301_num & has_7311_num
+            erreurs_fact = []
+            for num in sorted(nums_erreur):
+                rows = df_mix[df_mix["num_facture"] == num]
+                pat  = rows["patient"].iloc[0]
+                date = rows["date"].iloc[0]
+                codes = sorted(rows["tarif"].unique())
+                seances_pat = df_physio[df_physio["patient"] == pat]["date"]
+                if seances_pat.empty: continue
+                if (ajd - seances_pat.max()).days > jours_inactif: continue
+                erreurs_fact.append({
+                    "N° facture":     num,
+                    "Patient":        pat,
+                    "Date":           date.strftime("%d.%m.%Y"),
+                    "Codes présents": ", ".join(codes),
+                })
 
-            if nums_erreur:
-                # Ne garder que les patients encore actifs
-                erreurs_fact = []
-                for num in sorted(nums_erreur):
-                    rows = df_mix[df_mix["num_facture"] == num]
-                    pat  = rows["patient"].iloc[0]
-                    date = rows["date"].iloc[0]
-                    codes = sorted(rows["tarif"].unique())
-                    # Vérifier si le patient est actif (séance 7301 ou 7311 dans les X derniers jours)
-                    seances_pat = df_physio[df_physio["patient"] == pat]["date"]
-                    if seances_pat.empty: continue
-                    if (ajd - seances_pat.max()).days > jours_inactif: continue
-                    erreurs_fact.append({
-                        "N° facture":      num,
-                        "Patient":         pat,
-                        "Date":            date.strftime("%d.%m.%Y"),
-                        "Codes présents":  ", ".join(codes),
-                    })
-                st.dataframe(pd.DataFrame(erreurs_fact), use_container_width=True, hide_index=True)
-                st.warning(f"⚠️ {len(nums_erreur)} facture(s) à corriger.")
-            else:
-                st.success("✅ Aucune facture mixte 7301+7311 détectée.")
+            tab1, tab2, tab3, tab4, tab5 = st.tabs([
+                f"🟢 36 séances ({len(cas_36)})",
+                f"🟢 6 mois ({len(cas_6mois)})",
+                f"🔍 À analyser ({len(cas_manuel)})",
+                f"⚠️ Jamais de 7350 ({len(cas_jamais)})",
+                f"🚨 Erreurs facturation ({len(erreurs_fact)})",
+            ])
+
+            with tab1:
+                st.subheader("🟢 Critère : 36 séances 7301/7311 atteintes")
+                if cas_36:
+                    st.dataframe(pd.DataFrame(cas_36).sort_values("Séances depuis 7350", ascending=False),
+                        use_container_width=True, hide_index=True)
+                else:
+                    st.info("Aucun patient n'a atteint 36 séances depuis son dernier 7350.")
+
+            with tab2:
+                st.subheader("🟢 Critère : 6 mois écoulés depuis le dernier 7350")
+                if cas_6mois:
+                    df_6mois = pd.DataFrame(cas_6mois)
+                    df_6mois["_sort"] = pd.to_numeric(df_6mois["Jours depuis dernier 7350"], errors="coerce")
+                    df_6mois = df_6mois.sort_values("_sort", ascending=False).drop(columns=["_sort"])
+                    st.dataframe(df_6mois, use_container_width=True, hide_index=True)
+                else:
+                    st.info("Aucun patient n'a atteint 6 mois depuis son dernier 7350.")
+
+            with tab3:
+                st.subheader("🔍 À analyser manuellement — reprise après pause")
+                st.caption("Ces patients ont eu une interruption de traitement et sont revenus. Vérifier s'il s'agit d'un nouveau cas (nouveau 7350 possible dès la 1ère séance).")
+                if cas_manuel:
+                    st.dataframe(pd.DataFrame(cas_manuel), use_container_width=True, hide_index=True)
+                else:
+                    st.info("Aucun cas de reprise détecté.")
+
+            with tab4:
+                st.subheader("⚠️ Patients actifs sans aucun 7350 dans l'export")
+                st.caption(
+                    "La fiabilité dépend de la période couverte par l'export : "
+                    "🔴 **Très probable** = 1ère séance > 90j · "
+                    "🟠 **Probable** = 30–90j · "
+                    "🟡 **Incertain** = < 30j (le 7350 a peut-être été facturé avant la période de l'export)."
+                )
+                if cas_jamais:
+                    df_jamais = pd.DataFrame(cas_jamais).sort_values("Ancienneté (jours)", ascending=False)
+                    st.dataframe(df_jamais, use_container_width=True, hide_index=True)
+                else:
+                    st.info("Aucun patient actif sans 7350 détecté dans l'export.")
+
+            with tab5:
+                st.subheader("🚨 Erreurs de facturation — 7301 et 7311 sur la même facture")
+                st.caption("Un patient ne peut pas avoir les deux codes dans la même facture. Chaque code correspond à un cas distinct et doit être sur une facture séparée.")
+                if erreurs_fact:
+                    st.dataframe(pd.DataFrame(erreurs_fact), use_container_width=True, hide_index=True)
+                    st.warning(f"⚠️ {len(erreurs_fact)} facture(s) à corriger.")
+                else:
+                    st.success("✅ Aucune facture mixte 7301+7311 pour les patients actifs.")
 
         except Exception as e:
             st.error(f"❌ Erreur : {e}")
