@@ -2327,15 +2327,17 @@ elif st.session_state.page == "pos7350":
                 c_tarif = df.columns[2]
                 c_pat   = _cm["patient"] or df.columns[8]
                 c_mont  = _cm["chiffre"] or df.columns[11]
+                c_num   = df.columns[0]  # Numéro de facture — toujours col 0
                 df[c_date]  = pd.to_datetime(df[c_date], errors="coerce")
                 df[c_tarif] = df[c_tarif].astype(str).str.strip()
                 df[c_pat]   = df[c_pat].astype(str).str.strip()
                 df[c_mont]  = pd.to_numeric(df[c_mont], errors="coerce").fillna(0)
+                df[c_num]   = df[c_num].astype(str).str.strip()
                 # Uniquement les lignes réellement facturées (Chiffre > 0)
                 df = df[df[c_mont] > 0]
                 df = df.dropna(subset=[c_date, c_pat])
                 df = df[df[c_pat].str.lower() != "nan"]
-                return df[[c_date, c_tarif, c_pat]].rename(columns={c_date: "date", c_tarif: "tarif", c_pat: "patient"})
+                return df[[c_date, c_tarif, c_pat, c_num]].rename(columns={c_date: "date", c_tarif: "tarif", c_pat: "patient", c_num: "num_facture"})
 
             df_raw = charger_7350(f1, f1.name)
             if f2 is not None:
@@ -2382,7 +2384,9 @@ elif st.session_state.page == "pos7350":
                         bilans_par_type["7311"].append(d)
 
                 for position in ["7301", "7311"]:
-                    seances_pos = df_physio[(df_physio["patient"] == pat) & (df_physio["tarif"] == position)]["date"].sort_values().tolist()
+                    sub_pos = df_physio[(df_physio["patient"] == pat) & (df_physio["tarif"] == position)].sort_values("date")
+                    seances_pos = sub_pos["date"].tolist()
+                    num_factures_pos = sub_pos["num_facture"].tolist()
                     if not seances_pos:
                         continue
 
@@ -2402,16 +2406,20 @@ elif st.session_state.page == "pos7350":
                         date_facturable = dernier_bilan + pd.DateOffset(days=1)
                     else:
                         seances_depuis  = seances_pos
-                        jours_depuis    = 9999
+                        jours_depuis    = 0  # pas de 7350 → géré dans cas_jamais, pas cas_6mois
                         date_facturable = seances_pos[0]
 
                     nb_seances_depuis = len(seances_depuis)
 
                     # Détection reprise après pause
+                    # Une pause n'est réelle que si les deux séances sont sur des factures différentes
                     if dernier_bilan is not None and len(seances_depuis) >= 1:
-                        seances_apres = sorted(seances_depuis)
+                        idx_depuis = len(seances_pos) - len(seances_depuis)
+                        nums_depuis = num_factures_pos[idx_depuis:]
+                        seances_apres = sorted(zip(seances_depuis, nums_depuis), key=lambda x: x[0])
                         pause_detectee = any(
-                            (seances_apres[i] - seances_apres[i-1]).days > jours_inactif
+                            (seances_apres[i][0] - seances_apres[i-1][0]).days > jours_inactif
+                            and seances_apres[i][1] != seances_apres[i-1][1]  # factures différentes
                             for i in range(1, len(seances_apres))
                         )
                         if pause_detectee:
@@ -2435,13 +2443,13 @@ elif st.session_state.page == "pos7350":
                             "7350 facturable depuis": date_facturable.strftime("%d.%m.%Y"),
                         })
 
-                    if jours_depuis >= 183:
+                    if dernier_bilan is not None and jours_depuis >= 183:
                         cas_6mois.append({
                             "Patient":                   pat,
                             "Position":                  position,
-                            "Jours depuis dernier 7350": jours_depuis if jours_depuis < 9999 else "—",
+                            "Jours depuis dernier 7350": jours_depuis,
                             "Dernière séance":           derniere_seance.strftime("%d.%m.%Y"),
-                            "Dernier 7350":              dernier_bilan.strftime("%d.%m.%Y") if dernier_bilan else "Jamais",
+                            "Dernier 7350":              dernier_bilan.strftime("%d.%m.%Y"),
                             "7350 facturable depuis":    date_facturable.strftime("%d.%m.%Y"),
                         })
 
