@@ -821,8 +821,8 @@ if st.session_state.page == "accueil":
 
     st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
 
-    # Rangée 2 : Stats Patients · Rétrocession
-    c4, c5, _ = st.columns(3)
+    # Rangée 2 : Stats Patients · Rétrocession · 7350
+    c4, c5, c6 = st.columns(3)
     with c4:
         if st.button("👥 Stats Patients", use_container_width=True):
             st.session_state.page = "stats_patients"
@@ -830,6 +830,10 @@ if st.session_state.page == "accueil":
     with c5:
         if st.button("🤝 Rétrocession", use_container_width=True):
             st.session_state.page = "retrocession"
+            st.rerun()
+    with c6:
+        if st.button("🔁 Position 7350", use_container_width=True):
+            st.session_state.page = "pos7350"
             st.rerun()
 
     st.markdown("<br>", unsafe_allow_html=True)
@@ -2286,3 +2290,200 @@ elif st.session_state.page == "retrocession":
             st.error(f"❌ Erreur : {e}")
     else:
         st.info("👈 Chargez l'export Prestations du/de la thérapeute dans la sidebar pour commencer.")
+
+
+# ==========================================
+# 🔁 MODULE POSITION 7350
+# ==========================================
+elif st.session_state.page == "pos7350":
+    logo_html = get_logo_html()
+    if logo_html: st.markdown(logo_html, unsafe_allow_html=True)
+    st.markdown("<style>.block-container { padding-left: 1rem; padding-right: 1rem; max-width: 100%; }</style>", unsafe_allow_html=True)
+
+    if st.sidebar.button("⬅️ Retour Accueil", key="btn_back_7350"):
+        st.session_state.page = "accueil"
+        st.rerun()
+
+    st.title("🔁 Suivi de la position 7350")
+    st.caption("Identifie les patients actifs pour qui la position 7350 peut être refacturée — 36 séances 7301/7311 ou 6 mois écoulés depuis le dernier 7350.")
+
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("**📂 Export Prestations**")
+    f1 = st.sidebar.file_uploader("Export récent (obligatoire)", type="xlsx", key="up_7350_1")
+    f2 = st.sidebar.file_uploader("Export plus ancien (optionnel)", type="xlsx", key="up_7350_2")
+    st.sidebar.markdown("---")
+    jours_inactif = st.sidebar.number_input("Jours sans séance = inactif", min_value=14, max_value=180, value=60, key="jours_inactif_7350")
+
+    if f1 is not None:
+        try:
+            import numpy as np
+
+            @st.cache_data(show_spinner=False)
+            def charger_7350(file_bytes, nom_fichier):
+                df = pd.read_excel(file_bytes, sheet_name="Prestation")
+                _cm = resoudre_colonnes(df)
+                c_date  = _cm["date_facture"] or df.columns[1]
+                c_tarif = df.columns[2]
+                c_pat   = _cm["patient"] or df.columns[8]
+                c_mont  = _cm["chiffre"] or df.columns[11]
+                df[c_date]  = pd.to_datetime(df[c_date], errors="coerce")
+                df[c_tarif] = df[c_tarif].astype(str).str.strip()
+                df[c_pat]   = df[c_pat].astype(str).str.strip()
+                df[c_mont]  = pd.to_numeric(df[c_mont], errors="coerce").fillna(0)
+                # Uniquement les lignes réellement facturées (Chiffre > 0)
+                df = df[df[c_mont] > 0]
+                df = df.dropna(subset=[c_date, c_pat])
+                df = df[df[c_pat].str.lower() != "nan"]
+                return df[[c_date, c_tarif, c_pat]].rename(columns={c_date: "date", c_tarif: "tarif", c_pat: "patient"})
+
+            df_raw = charger_7350(f1, f1.name)
+            if f2 is not None:
+                df_raw2 = charger_7350(f2, f2.name)
+                df_raw = pd.concat([df_raw, df_raw2]).drop_duplicates().reset_index(drop=True)
+
+            df_raw = df_raw.sort_values("date")
+            ajd = pd.Timestamp(datetime.today().date())
+
+            df_7350   = df_raw[df_raw["tarif"] == "7350"].copy()
+            df_physio = df_raw[df_raw["tarif"].isin(["7301", "7311"])].copy()
+
+            # Associer chaque 7350 à son type (7301 ou 7311) par co-occurrence le même jour
+            # Un 7350 facturé le même jour qu'un 7311 appartient au cas 7311, idem pour 7301
+            def type_du_bilan(pat, date_bilan):
+                """Retourne '7301' ou '7311' selon le code facturé le même jour que le 7350."""
+                meme_jour = df_physio[
+                    (df_physio["patient"] == pat) &
+                    (df_physio["date"] == date_bilan)
+                ]["tarif"].tolist()
+                if "7311" in meme_jour: return "7311"
+                if "7301" in meme_jour: return "7301"
+                return None  # 7350 isolé — type inconnu
+
+            tous_patients = sorted(df_raw["patient"].unique())
+
+            cas_36     = []
+            cas_6mois  = []
+            cas_manuel = []
+
+            for pat in tous_patients:
+                bilans_bruts = sorted(df_7350[df_7350["patient"] == pat]["date"].tolist())
+
+                # Séparer les bilans par type via co-occurrence
+                bilans_par_type = {"7301": [], "7311": []}
+                for d in bilans_bruts:
+                    t = type_du_bilan(pat, d)
+                    if t in bilans_par_type:
+                        bilans_par_type[t].append(d)
+                    else:
+                        # Type inconnu → attribuer aux deux (conservateur)
+                        bilans_par_type["7301"].append(d)
+                        bilans_par_type["7311"].append(d)
+
+                for position in ["7301", "7311"]:
+                    seances_pos = df_physio[(df_physio["patient"] == pat) & (df_physio["tarif"] == position)]["date"].sort_values().tolist()
+                    if not seances_pos:
+                        continue
+
+                    derniere_seance = seances_pos[-1]
+                    jours_depuis_seance = (ajd - derniere_seance).days
+                    actif = jours_depuis_seance <= jours_inactif
+                    if not actif:
+                        continue
+
+                    bilans_type = sorted(bilans_par_type[position])
+                    dernier_bilan = bilans_type[-1] if bilans_type else None
+
+                    if dernier_bilan is not None:
+                        # >= pour inclure la séance du jour du 7350 comme séance n°1
+                        seances_depuis = [s for s in seances_pos if s >= dernier_bilan]
+                        jours_depuis   = (ajd - dernier_bilan).days
+                        date_facturable = dernier_bilan + pd.DateOffset(days=1)
+                    else:
+                        seances_depuis  = seances_pos
+                        jours_depuis    = 9999
+                        date_facturable = seances_pos[0]
+
+                    nb_seances_depuis = len(seances_depuis)
+
+                    # Détection reprise après pause
+                    if dernier_bilan is not None and len(seances_depuis) >= 1:
+                        seances_apres = sorted(seances_depuis)
+                        pause_detectee = any(
+                            (seances_apres[i] - seances_apres[i-1]).days > jours_inactif
+                            for i in range(1, len(seances_apres))
+                        )
+                        if pause_detectee:
+                            cas_manuel.append({
+                                "Patient":                pat,
+                                "Position":               position,
+                                "Dernière séance":        derniere_seance.strftime("%d.%m.%Y"),
+                                "Dernier 7350":           dernier_bilan.strftime("%d.%m.%Y"),
+                                "7350 facturable depuis": date_facturable.strftime("%d.%m.%Y"),
+                                "Remarque":               "Reprise après pause — vérifier si nouveau cas",
+                            })
+                            continue
+
+                    if nb_seances_depuis >= 36:
+                        cas_36.append({
+                            "Patient":                pat,
+                            "Position":               position,
+                            "Séances depuis 7350":    nb_seances_depuis,
+                            "Dernière séance":        derniere_seance.strftime("%d.%m.%Y"),
+                            "Dernier 7350":           dernier_bilan.strftime("%d.%m.%Y") if dernier_bilan else "Jamais",
+                            "7350 facturable depuis": date_facturable.strftime("%d.%m.%Y"),
+                        })
+
+                    if jours_depuis >= 183:
+                        cas_6mois.append({
+                            "Patient":                   pat,
+                            "Position":                  position,
+                            "Jours depuis dernier 7350": jours_depuis if jours_depuis < 9999 else "—",
+                            "Dernière séance":           derniere_seance.strftime("%d.%m.%Y"),
+                            "Dernier 7350":              dernier_bilan.strftime("%d.%m.%Y") if dernier_bilan else "Jamais",
+                            "7350 facturable depuis":    date_facturable.strftime("%d.%m.%Y"),
+                        })
+
+            # Métriques
+            c1, c2, c3 = st.columns(3)
+            c1.metric("🟢 Critère 36 séances", len(cas_36))
+            c2.metric("🟢 Critère 6 mois", len(cas_6mois))
+            c3.metric("🔍 À analyser manuellement", len(cas_manuel))
+
+            st.caption("⚠️ Si un patient a plusieurs cas actifs (ex: épaule + pied), les séances sont comptées ensemble — le module peut sous-estimer les opportunités.")
+
+            st.markdown("---")
+
+            # --- Tableau 36 séances ---
+            st.subheader("🟢 Critère : 36 séances 7301/7311 atteintes")
+            if cas_36:
+                st.dataframe(pd.DataFrame(cas_36).sort_values("Séances depuis 7350", ascending=False),
+                    use_container_width=True, hide_index=True)
+            else:
+                st.info("Aucun patient n'a atteint 36 séances depuis son dernier 7350.")
+
+            st.markdown("---")
+
+            # --- Tableau 6 mois ---
+            st.subheader("🟢 Critère : 6 mois écoulés depuis le dernier 7350")
+            if cas_6mois:
+                st.dataframe(pd.DataFrame(cas_6mois).sort_values("Jours depuis dernier 7350", ascending=False),
+                    use_container_width=True, hide_index=True)
+            else:
+                st.info("Aucun patient n'a atteint 6 mois depuis son dernier 7350.")
+
+            st.markdown("---")
+
+            # --- Tableau manuel ---
+            st.subheader("🔍 À analyser manuellement — reprise après pause")
+            st.caption("Ces patients ont eu une interruption de traitement et sont revenus. Vérifier s'il s'agit d'un nouveau cas (nouveau 7350 possible dès la 1ère séance).")
+            if cas_manuel:
+                st.dataframe(pd.DataFrame(cas_manuel),
+                    use_container_width=True, hide_index=True)
+            else:
+                st.info("Aucun cas de reprise détecté.")
+
+        except Exception as e:
+            st.error(f"❌ Erreur : {e}")
+            import traceback; st.code(traceback.format_exc())
+    else:
+        st.info("👈 Chargez l'export Prestations dans la sidebar pour commencer.")
