@@ -2487,3 +2487,4 @@ elif st.session_state.page == "pos7350":
             import traceback; st.code(traceback.format_exc())
     else:
         st.info("👈 Chargez l'export Prestations dans la sidebar pour commencer.")
+    
