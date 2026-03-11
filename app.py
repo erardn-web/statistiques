@@ -2313,7 +2313,7 @@ elif st.session_state.page == "pos7350":
     f1 = st.sidebar.file_uploader("Export récent (obligatoire)", type="xlsx", key="up_7350_1")
     f2 = st.sidebar.file_uploader("Export plus ancien (optionnel)", type="xlsx", key="up_7350_2")
     st.sidebar.markdown("---")
-    jours_inactif = st.sidebar.number_input("Jours sans séance = inactif", min_value=14, max_value=180, value=60, key="jours_inactif_7350")
+    jours_inactif = st.sidebar.number_input("Jours sans séance = inactif", min_value=14, max_value=180, value=30, key="jours_inactif_7350")
 
     if f1 is not None:
         try:
@@ -2532,6 +2532,41 @@ elif st.session_state.page == "pos7350":
                 st.dataframe(df_jamais, use_container_width=True, hide_index=True)
             else:
                 st.info("Aucun patient actif sans 7350 détecté dans l'export.")
+
+            st.markdown("---")
+
+            # --- Erreurs de facturation : 7301 + 7311 dans la même facture ---
+            st.subheader("🚨 Erreurs de facturation — 7301 et 7311 sur la même facture")
+            st.caption("Un patient ne peut pas avoir les deux codes dans la même facture. Chaque code correspond à un cas distinct et doit être sur une facture séparée.")
+
+            # Détecter les factures mixtes sur df_raw (inclut toutes positions)
+            df_mix = df_raw.copy()
+            has_7301_num = set(df_mix[df_mix["tarif"] == "7301"]["num_facture"].unique())
+            has_7311_num = set(df_mix[df_mix["tarif"] == "7311"]["num_facture"].unique())
+            nums_erreur  = has_7301_num & has_7311_num
+
+            if nums_erreur:
+                # Ne garder que les patients encore actifs
+                erreurs_fact = []
+                for num in sorted(nums_erreur):
+                    rows = df_mix[df_mix["num_facture"] == num]
+                    pat  = rows["patient"].iloc[0]
+                    date = rows["date"].iloc[0]
+                    codes = sorted(rows["tarif"].unique())
+                    # Vérifier si le patient est actif (séance 7301 ou 7311 dans les X derniers jours)
+                    seances_pat = df_physio[df_physio["patient"] == pat]["date"]
+                    if seances_pat.empty: continue
+                    if (ajd - seances_pat.max()).days > jours_inactif: continue
+                    erreurs_fact.append({
+                        "N° facture":      num,
+                        "Patient":         pat,
+                        "Date":            date.strftime("%d.%m.%Y"),
+                        "Codes présents":  ", ".join(codes),
+                    })
+                st.dataframe(pd.DataFrame(erreurs_fact), use_container_width=True, hide_index=True)
+                st.warning(f"⚠️ {len(nums_erreur)} facture(s) à corriger.")
+            else:
+                st.success("✅ Aucune facture mixte 7301+7311 détectée.")
 
         except Exception as e:
             st.error(f"❌ Erreur : {e}")
