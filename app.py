@@ -323,7 +323,8 @@ def calculer_jours_versement(p_hist):
 
 def jours_avant_prochain_versement(date_ref, weekday_cible, decaler_semaine=False):
     """Jours de date_ref jusqu'au prochain versement de l'assureur.
-    decaler_semaine=True : +7 jours (pattern faible < 50%).
+    delta=0 = aujourd'hui → inclus (on ne sait pas si le virement a déjà eu lieu).
+    decaler_semaine=True : +7 jours supplémentaires (pattern < 50%).
     """
     delta = (weekday_cible - date_ref.weekday()) % 7
     if decaler_semaine:
