@@ -1018,14 +1018,16 @@ elif st.session_state.page == "factures":
             if not f_att_old.empty:
                 st.caption(f"⚠️ {len(f_att_old)} facture(s) de plus de 35 jours exclues des projections ({chf_int(round(f_att_old['montant'].sum()))} CHF) — à traiter manuellement.")
 
-            # Filtre assureurs pour la simulation (persistant, affiché en permanence)
+            # Filtre assureurs (persistant)
             ass_dispo_sim = sorted(f_att_liq["assureur"].unique().tolist())
             sel_ass_sim = st.multiselect(
                 "Filtrer par assureur (simulation) :", ass_dispo_sim,
                 default=ass_dispo_sim, key="sel_ass_sim"
             )
 
-            if btn_simuler:
+            def _run_simulation(date_cible, periods_sel, options_p, df, f_att_liq,
+                                sel_ass_sim, ass_dispo_sim, corriger_jours, ajd):
+                """Calcule la simulation et retourne le dict résultat."""
                 ts_cible = pd.Timestamp(date_cible)
                 jour_semaine = ts_cible.weekday()
                 if jour_semaine == 5:
@@ -1038,29 +1040,48 @@ elif st.session_state.page == "factures":
                     ts_effective = ts_cible
                     note_weekend = None
                 jours_delta = (ts_effective - ajd).days
-                if jours_delta >= 0:
-                    f_att_sim = f_att_liq[f_att_liq["assureur"].isin(sel_ass_sim)].copy()
-                    res_sim = []
-                    for p_nom in periods_sel:
-                        val = options_p[p_nom]
-                        limit = ajd - pd.DateOffset(months=val) if val else df["date_facture"].min()
-                        p_hist_sim = df[(df["date_paiement"].notna()) & (df["date_facture"] >= limit)].copy()
-                        p_hist_sim["delai"] = (p_hist_sim["date_paiement"] - p_hist_sim["date_facture"]).dt.days
-                        p_hist_sim = p_hist_sim[(p_hist_sim["assureur"] != "Patient") & (p_hist_sim["delai"] >= 1)]
-                        jv_sim = calculer_jours_versement(p_hist_sim) if corriger_jours else None
-                        liq, _ = calculer_liquidites_fournisseur(f_att_sim, p_hist_sim, [jours_delta],
-                                                                  jours_versement=jv_sim, date_ref=ajd)
-                        res_sim.append({"Période": p_nom, "Estimation (CHF)": f"{chf_int(round(liq[jours_delta]))}",
-                                        "Assureurs": f"{len(sel_ass_sim)}/{len(ass_dispo_sim)}"})
-                    # Stocker en session_state pour persister entre les interactions
-                    st.session_state["sim_result"] = {
-                        "date": ts_cible.strftime("%d.%m.%Y"),
-                        "jours": (ts_cible - ajd).days,
-                        "note_weekend": note_weekend,
-                        "res_sim": res_sim,
-                    }
+                if jours_delta < 0:
+                    return None
+                f_att_sim = f_att_liq[f_att_liq["assureur"].isin(sel_ass_sim)].copy()
+                res_sim = []
+                for p_nom in periods_sel:
+                    val = options_p[p_nom]
+                    limit = ajd - pd.DateOffset(months=val) if val else df["date_facture"].min()
+                    p_hist_sim = df[(df["date_paiement"].notna()) & (df["date_facture"] >= limit)].copy()
+                    p_hist_sim["delai"] = (p_hist_sim["date_paiement"] - p_hist_sim["date_facture"]).dt.days
+                    p_hist_sim = p_hist_sim[(p_hist_sim["assureur"] != "Patient") & (p_hist_sim["delai"] >= 1)]
+                    jv_sim = calculer_jours_versement(p_hist_sim) if corriger_jours else None
+                    liq, _ = calculer_liquidites_fournisseur(f_att_sim, p_hist_sim, [jours_delta],
+                                                              jours_versement=jv_sim, date_ref=ajd)
+                    res_sim.append({"Période": p_nom, "Estimation (CHF)": f"{chf_int(round(liq[jours_delta]))}",
+                                    "Assureurs": f"{len(sel_ass_sim)}/{len(ass_dispo_sim)}"})
+                return {
+                    "date": ts_cible.strftime("%d.%m.%Y"),
+                    "jours": (ts_cible - ajd).days,
+                    "note_weekend": note_weekend,
+                    "res_sim": res_sim,
+                    "date_cible_raw": str(date_cible),
+                    "sel_ass_sim": sel_ass_sim,
+                    "corriger_jours": corriger_jours,
+                }
 
-            # Affichage persistant du résultat de simulation
+            # Lancer si bouton cliqué
+            if btn_simuler:
+                result = _run_simulation(date_cible, periods_sel, options_p, df, f_att_liq,
+                                         sel_ass_sim, ass_dispo_sim, corriger_jours, ajd)
+                if result:
+                    st.session_state["sim_result"] = result
+
+            # Recalculer si le filtre assureurs a changé (simulation déjà lancée)
+            elif "sim_result" in st.session_state:
+                sr = st.session_state["sim_result"]
+                if sr.get("sel_ass_sim") != sel_ass_sim or sr.get("corriger_jours") != corriger_jours:
+                    result = _run_simulation(date_cible, periods_sel, options_p, df, f_att_liq,
+                                             sel_ass_sim, ass_dispo_sim, corriger_jours, ajd)
+                    if result:
+                        st.session_state["sim_result"] = result
+
+            # Affichage persistant
             if "sim_result" in st.session_state:
                 sr = st.session_state["sim_result"]
                 st.markdown(f"**🔮 Simulation au {sr['date']}** — dans {sr['jours']} jour{'s' if sr['jours'] > 1 else ''}")
