@@ -1037,6 +1037,8 @@ elif st.session_state.page == "factures":
                         limit = ajd - pd.DateOffset(months=val) if val else df["date_facture"].min()
                         p_hist_sim = df[(df["date_paiement"].notna()) & (df["date_facture"] >= limit)].copy()
                         p_hist_sim["delai"] = (p_hist_sim["date_paiement"] - p_hist_sim["date_facture"]).dt.days
+                        # Exclure paiements directs patients (délai = 0) et délais négatifs (erreurs de saisie)
+                        p_hist_sim = p_hist_sim[(p_hist_sim["assureur"] != "Patient") & (p_hist_sim["delai"] >= 1)]
                         jv_sim = calculer_jours_versement(p_hist_sim) if corriger_jours else None
                         liq, _ = calculer_liquidites_fournisseur(f_att_liq, p_hist_sim, [jours_delta],
                                                                   jours_versement=jv_sim, date_ref=ajd)
@@ -1061,6 +1063,8 @@ elif st.session_state.page == "factures":
                     df_p = df[df["date_facture"] >= limit_p]
                     p_hist = df_p[df_p["date_paiement"].notna()].copy()
                     p_hist["delai"] = (p_hist["date_paiement"] - p_hist["date_facture"]).dt.days
+                    # Exclure paiements directs patients (délai = 0) et délais négatifs (erreurs de saisie)
+                    p_hist = p_hist[(p_hist["assureur"] != "Patient") & (p_hist["delai"] >= 1)]
                     jv = calculer_jours_versement(p_hist) if corriger_jours else None
                     with tab1:
                         st.subheader(f"Liquidités : {p_name}")
