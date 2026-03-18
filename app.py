@@ -306,14 +306,19 @@ def calculer_jours_versement(p_hist):
     p_recent = p_hist[p_hist["date_paiement"] >= limite]
     if p_recent.empty:
         p_recent = p_hist  # fallback sur tout l'historique
+    jours_fr = {0:"Lun",1:"Mar",2:"Mer",3:"Jeu",4:"Ven",5:"Sam",6:"Dim"}
     for ass, grp in p_recent.groupby("assureur"):
         jours = grp["date_paiement"].dropna().dt.dayofweek
         if jours.empty:
             continue
         counts = jours.value_counts()
+        total  = len(jours)
         dominant_j   = counts.idxmax()
-        dominant_pct = counts.max() / len(jours)
-        resultat[str(ass)] = (int(dominant_j), dominant_pct < 0.50)
+        dominant_pct = counts.max() / total
+        # Résumé des 2 premiers jours par fréquence décroissante
+        top2 = counts.head(2)
+        detail = ", ".join(f"{round(n/total*100)}% {jours_fr.get(j,'?')}" for j, n in top2.items())
+        resultat[str(ass)] = (int(dominant_j), dominant_pct < 0.50, detail)
     return resultat
 
 def jours_avant_prochain_versement(date_ref, weekday_cible, decaler_semaine=False):
@@ -356,7 +361,7 @@ def calculer_liquidites_fournisseur(f_attente, p_hist, jours_horizons,
             # Correction jour de versement
             if jours_versement is not None and date_ref is not None:
                 if ass in jours_versement:
-                    weekday_cible, decaler = jours_versement[ass]
+                    weekday_cible, decaler, _ = jours_versement[ass]
                     if jours_avant_prochain_versement(date_ref, weekday_cible, decaler) > h:
                         continue  # assureur ne versera pas dans cet horizon
 
@@ -1120,12 +1125,12 @@ elif st.session_state.page == "factures":
                         if corriger_jours and jv:
                             jours_fr = {0:"Lun",1:"Mar",2:"Mer",3:"Jeu",4:"Ven",5:"Sam",6:"Dim"}
                             lignes = []
-                            for ass_n, (wd, dec) in sorted(jv.items()):
+                            for ass_n, (wd, dec, detail) in sorted(jv.items()):
                                 delta = jours_avant_prochain_versement(ajd, wd, dec)
                                 lignes.append({
                                     "Assureur": ass_n,
-                                    "Jour habituel": jours_fr.get(wd, "?"),
-                                    "Pattern < 50%": "⚠️ +7j" if dec else "✅",
+                                    "Pattern (2 derniers mois)": detail,
+                                    "Fiable": "✅" if not dec else "⚠️ <50%",
                                     "Prochain versement dans": f"{delta}j"
                                 })
                             with st.expander("🗓️ Jours de versement détectés"):
