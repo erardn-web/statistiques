@@ -938,8 +938,6 @@ elif st.session_state.page == "factures":
             sel_lois = st.sidebar.multiselect("Types de Loi :", options=sorted(lois), default=lois)
             regrouper_assureurs = st.sidebar.checkbox("Regrouper par groupe d'assureurs", value=False,
                 help="Fusionne les assureurs appartenant au même groupe (ex. Le Groupe Mutuel + Philos → Groupe Mutuel)")
-            corriger_jours = st.sidebar.checkbox("🗓️ Correction par jour de versement", value=False,
-                help="Exclut les assureurs dont le jour de paiement habituel ne tombe pas dans l'horizon simulé. Ex: si Groupe Mutuel paie le vendredi, il ne compte pas pour une simulation à jeudi.")
             st.sidebar.header("📅 3. Périodes & Simulation")
             options_p = {"Global": None, "6 mois": 6, "4 mois": 4, "3 mois": 3, "2 mois": 2, "1 mois": 1}
             periods_sel = st.sidebar.multiselect("Analyser les périodes :", list(options_p.keys()), default=["Global", "4 mois", "2 mois"])
@@ -948,6 +946,9 @@ elif st.session_state.page == "factures":
             st.sidebar.markdown("---")
             date_cible = st.sidebar.date_input("Date cible (simulation) :", value=datetime.today())
             btn_simuler = st.sidebar.button("🔮 Simuler", use_container_width=True)
+            corriger_jours = st.sidebar.checkbox("🗓️ Correction par jour de versement", value=False,
+                help="Exclut les assureurs dont le jour de paiement habituel ne tombe pas dans l'horizon simulé.")
+            ass_disponibles_sim = sorted(df_brut[resoudre_colonnes(df_brut)["assureur"] or df_brut.columns[8]].dropna().unique().tolist()) if df_brut is not None else []
 
             _c = resoudre_colonnes(df_brut)
             # Fournisseur absent en mono-thérapeute → colonne virtuelle
@@ -1031,18 +1032,25 @@ elif st.session_state.page == "factures":
                     note_weekend = None
                 jours_delta = (ts_effective - ajd).days
                 if jours_delta >= 0:
+                    # Filtre assureurs pour la simulation
+                    ass_dispo_sim = sorted(f_att_liq["assureur"].unique().tolist())
+                    sel_ass_sim = st.multiselect(
+                        "Filtrer par assureur :", ass_dispo_sim,
+                        default=ass_dispo_sim, key="sel_ass_sim"
+                    )
+                    f_att_sim = f_att_liq[f_att_liq["assureur"].isin(sel_ass_sim)].copy()
                     res_sim = []
                     for p_nom in periods_sel:
                         val = options_p[p_nom]
                         limit = ajd - pd.DateOffset(months=val) if val else df["date_facture"].min()
                         p_hist_sim = df[(df["date_paiement"].notna()) & (df["date_facture"] >= limit)].copy()
                         p_hist_sim["delai"] = (p_hist_sim["date_paiement"] - p_hist_sim["date_facture"]).dt.days
-                        # Exclure paiements directs patients (délai = 0) et délais négatifs (erreurs de saisie)
                         p_hist_sim = p_hist_sim[(p_hist_sim["assureur"] != "Patient") & (p_hist_sim["delai"] >= 1)]
                         jv_sim = calculer_jours_versement(p_hist_sim) if corriger_jours else None
-                        liq, _ = calculer_liquidites_fournisseur(f_att_liq, p_hist_sim, [jours_delta],
+                        liq, _ = calculer_liquidites_fournisseur(f_att_sim, p_hist_sim, [jours_delta],
                                                                   jours_versement=jv_sim, date_ref=ajd)
-                        res_sim.append({"Période": p_nom, "Estimation (CHF)": f"{chf_int(round(liq[jours_delta]))}"})
+                        res_sim.append({"Période": p_nom, "Estimation (CHF)": f"{chf_int(round(liq[jours_delta]))}",
+                                        "Assureurs filtrés": f"{len(sel_ass_sim)}/{len(ass_dispo_sim)}"})
                     st.markdown(f"**🔮 Simulation au {ts_cible.strftime('%d.%m.%Y')}** — dans {(ts_cible - ajd).days} jour{'s' if (ts_cible - ajd).days > 1 else ''}")
                     if note_weekend:
                         st.caption(note_weekend)
@@ -1069,34 +1077,9 @@ elif st.session_state.page == "factures":
                     with tab1:
                         st.subheader(f"Liquidités : {p_name}")
                         horizons = [10, 20, 30]
-
-                        # Filtre assureurs
-                        ass_disponibles = sorted(f_att_liq["assureur"].unique().tolist())
-                        sel_ass_liq = st.multiselect(
-                            "Filtrer par assureur :", ass_disponibles,
-                            default=ass_disponibles, key=f"sel_ass_liq_{p_name}"
-                        )
-                        f_att_filtre = f_att_liq[f_att_liq["assureur"].isin(sel_ass_liq)].copy()
-
-                        liq, t = calculer_liquidites_fournisseur(f_att_filtre, p_hist, horizons,
-                                                                  jours_versement=jv, date_ref=ajd)
+                        liq, t = calculer_liquidites_fournisseur(f_att_liq, p_hist, horizons,
+                                                                  jours_versement=None, date_ref=ajd)
                         st.table(pd.DataFrame({"Horizon": [f"Sous {h}j" for h in horizons], "Estimation (CHF)": [f"{chf_int(round(liq[h]))}" for h in horizons]}))
-
-                        # Détail par assureur
-                        with st.expander("🔍 Détail par assureur"):
-                            lignes_ass = []
-                            for ass_n in sorted(sel_ass_liq):
-                                f_ass = f_att_filtre[f_att_filtre["assureur"] == ass_n]
-                                if f_ass.empty: continue
-                                liq_ass, _ = calculer_liquidites_fournisseur(
-                                    f_ass, p_hist, horizons, jours_versement=jv, date_ref=ajd
-                                )
-                                row = {"Assureur": ass_n, "Factures": len(f_ass), "Brut (CHF)": chf_int(round(f_ass["montant"].sum()))}
-                                for h in horizons:
-                                    row[f"Sous {h}j"] = chf_int(round(liq_ass[h]))
-                                lignes_ass.append(row)
-                            if lignes_ass:
-                                st.dataframe(pd.DataFrame(lignes_ass), use_container_width=True, hide_index=True)
 
                         if corriger_jours and jv:
                             jours_fr = {0:"Lun",1:"Mar",2:"Mer",3:"Jeu",4:"Ven",5:"Sam",6:"Dim"}
