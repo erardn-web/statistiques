@@ -289,7 +289,45 @@ def convertir_date(val):
     except:
         return pd.to_datetime(val, errors="coerce")
 
-def calculer_liquidites_fournisseur(f_attente, p_hist, jours_horizons):
+def calculer_jours_versement(p_hist):
+    """Calcule le jour de versement effectif par assureur.
+    Basé sur les 2 derniers mois uniquement pour refléter le comportement récent.
+    - Jour dominant >= 50% : on utilise ce jour.
+    - Jour dominant < 50% : on décale d'une semaine (conservateur).
+    Retourne {assureur: (weekday 0-6, decaler_semaine bool)}
+    """
+    import pandas as pd
+    resultat = {}
+    if p_hist.empty:
+        return resultat
+    # Restreindre aux 2 derniers mois pour capter les changements récents
+    date_max = p_hist["date_paiement"].dropna().max()
+    limite   = date_max - pd.DateOffset(months=2)
+    p_recent = p_hist[p_hist["date_paiement"] >= limite]
+    if p_recent.empty:
+        p_recent = p_hist  # fallback sur tout l'historique
+    for ass, grp in p_recent.groupby("assureur"):
+        jours = grp["date_paiement"].dropna().dt.dayofweek
+        if jours.empty:
+            continue
+        counts = jours.value_counts()
+        dominant_j   = counts.idxmax()
+        dominant_pct = counts.max() / len(jours)
+        resultat[str(ass)] = (int(dominant_j), dominant_pct < 0.50)
+    return resultat
+
+def jours_avant_prochain_versement(date_ref, weekday_cible, decaler_semaine=False):
+    """Jours de date_ref jusqu'au prochain versement de l'assureur.
+    decaler_semaine=True : +7 jours (pattern faible < 50%).
+    """
+    delta = (weekday_cible - date_ref.weekday()) % 7
+    if decaler_semaine:
+        delta += 7
+    return delta
+
+
+def calculer_liquidites_fournisseur(f_attente, p_hist, jours_horizons,
+                                    jours_versement=None, date_ref=None):
     """Calcul de probabilité de paiement pour le module Facturation.
     3 niveaux de granularité : assureur×fournisseur → fournisseur → global.
 
@@ -297,8 +335,8 @@ def calculer_liquidites_fournisseur(f_attente, p_hist, jours_horizons):
     (age_actuel + h), puis on applique P(delai ≤ age_à_horizon) sur
     l'historique de l'assureur×fournisseur.
 
-    Exemple : facture de 8j, horizon 10j → âge à J10 = 18j
-              → P(Assura physio paie en ≤ 18j) ≈ 97%
+    Si jours_versement est fourni, on n'inclut une facture dans l'horizon h
+    que si le prochain versement de son assureur tombe dans les h jours.
     """
     liq = {h: 0.0 for h in jours_horizons}
     taux_glob = {h: 0.0 for h in jours_horizons}
@@ -313,6 +351,15 @@ def calculer_liquidites_fournisseur(f_attente, p_hist, jours_horizons):
         taux_glob[h] = (delais_global <= h).mean()
         total_h = 0.0
         for _, row in f_attente.iterrows():
+            ass = str(row["assureur"])
+
+            # Correction jour de versement
+            if jours_versement is not None and date_ref is not None:
+                if ass in jours_versement:
+                    weekday_cible, decaler = jours_versement[ass]
+                    if jours_avant_prochain_versement(date_ref, weekday_cible, decaler) > h:
+                        continue  # assureur ne versera pas dans cet horizon
+
             age   = int(row.get("delai_actuel", 0))
             seuil = age + h
             key   = (row["assureur"], row["fournisseur"])
@@ -850,6 +897,16 @@ if st.session_state.page == "accueil":
 
     st.markdown("<br>", unsafe_allow_html=True)
 
+    # ── SECTION GESTION INTERNE ───────────────────────────────────
+    st.markdown('<div class="section-label">🏢 Gestion interne</div>', unsafe_allow_html=True)
+    col_g, _ = st.columns([1, 2])
+    with col_g:
+        if st.button("🎓 Formations", use_container_width=True):
+            st.session_state.page = "formations"
+            st.rerun()
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
 # ==========================================
 # 📊 MODULE FACTURES (ORIGINAL RÉPARÉ)
 # ==========================================
@@ -881,6 +938,8 @@ elif st.session_state.page == "factures":
             sel_lois = st.sidebar.multiselect("Types de Loi :", options=sorted(lois), default=lois)
             regrouper_assureurs = st.sidebar.checkbox("Regrouper par groupe d'assureurs", value=False,
                 help="Fusionne les assureurs appartenant au même groupe (ex. Le Groupe Mutuel + Philos → Groupe Mutuel)")
+            corriger_jours = st.sidebar.checkbox("🗓️ Correction par jour de versement", value=False,
+                help="Exclut les assureurs dont le jour de paiement habituel ne tombe pas dans l'horizon simulé. Ex: si Groupe Mutuel paie le vendredi, il ne compte pas pour une simulation à jeudi.")
             st.sidebar.header("📅 3. Périodes & Simulation")
             options_p = {"Global": None, "6 mois": 6, "4 mois": 4, "3 mois": 3, "2 mois": 2, "1 mois": 1}
             periods_sel = st.sidebar.multiselect("Analyser les périodes :", list(options_p.keys()), default=["Global", "4 mois", "2 mois"])
@@ -978,7 +1037,9 @@ elif st.session_state.page == "factures":
                         limit = ajd - pd.DateOffset(months=val) if val else df["date_facture"].min()
                         p_hist_sim = df[(df["date_paiement"].notna()) & (df["date_facture"] >= limit)].copy()
                         p_hist_sim["delai"] = (p_hist_sim["date_paiement"] - p_hist_sim["date_facture"]).dt.days
-                        liq, _ = calculer_liquidites_fournisseur(f_att_liq, p_hist_sim, [jours_delta])
+                        jv_sim = calculer_jours_versement(p_hist_sim) if corriger_jours else None
+                        liq, _ = calculer_liquidites_fournisseur(f_att_liq, p_hist_sim, [jours_delta],
+                                                                  jours_versement=jv_sim, date_ref=ajd)
                         res_sim.append({"Période": p_nom, "Estimation (CHF)": f"{chf_int(round(liq[jours_delta]))}"})
                     st.markdown(f"**🔮 Simulation au {ts_cible.strftime('%d.%m.%Y')}** — dans {(ts_cible - ajd).days} jour{'s' if (ts_cible - ajd).days > 1 else ''}")
                     if note_weekend:
@@ -1000,11 +1061,52 @@ elif st.session_state.page == "factures":
                     df_p = df[df["date_facture"] >= limit_p]
                     p_hist = df_p[df_p["date_paiement"].notna()].copy()
                     p_hist["delai"] = (p_hist["date_paiement"] - p_hist["date_facture"]).dt.days
+                    jv = calculer_jours_versement(p_hist) if corriger_jours else None
                     with tab1:
                         st.subheader(f"Liquidités : {p_name}")
                         horizons = [10, 20, 30]
-                        liq, t = calculer_liquidites_fournisseur(f_att_liq, p_hist, horizons)
+
+                        # Filtre assureurs
+                        ass_disponibles = sorted(f_att_liq["assureur"].unique().tolist())
+                        sel_ass_liq = st.multiselect(
+                            "Filtrer par assureur :", ass_disponibles,
+                            default=ass_disponibles, key=f"sel_ass_liq_{p_name}"
+                        )
+                        f_att_filtre = f_att_liq[f_att_liq["assureur"].isin(sel_ass_liq)].copy()
+
+                        liq, t = calculer_liquidites_fournisseur(f_att_filtre, p_hist, horizons,
+                                                                  jours_versement=jv, date_ref=ajd)
                         st.table(pd.DataFrame({"Horizon": [f"Sous {h}j" for h in horizons], "Estimation (CHF)": [f"{chf_int(round(liq[h]))}" for h in horizons]}))
+
+                        # Détail par assureur
+                        with st.expander("🔍 Détail par assureur"):
+                            lignes_ass = []
+                            for ass_n in sorted(sel_ass_liq):
+                                f_ass = f_att_filtre[f_att_filtre["assureur"] == ass_n]
+                                if f_ass.empty: continue
+                                liq_ass, _ = calculer_liquidites_fournisseur(
+                                    f_ass, p_hist, horizons, jours_versement=jv, date_ref=ajd
+                                )
+                                row = {"Assureur": ass_n, "Factures": len(f_ass), "Brut (CHF)": chf_int(round(f_ass["montant"].sum()))}
+                                for h in horizons:
+                                    row[f"Sous {h}j"] = chf_int(round(liq_ass[h]))
+                                lignes_ass.append(row)
+                            if lignes_ass:
+                                st.dataframe(pd.DataFrame(lignes_ass), use_container_width=True, hide_index=True)
+
+                        if corriger_jours and jv:
+                            jours_fr = {0:"Lun",1:"Mar",2:"Mer",3:"Jeu",4:"Ven",5:"Sam",6:"Dim"}
+                            lignes = []
+                            for ass_n, (wd, dec) in sorted(jv.items()):
+                                delta = jours_avant_prochain_versement(ajd, wd, dec)
+                                lignes.append({
+                                    "Assureur": ass_n,
+                                    "Jour habituel": jours_fr.get(wd, "?"),
+                                    "Pattern < 50%": "⚠️ +7j" if dec else "✅",
+                                    "Prochain versement dans": f"{delta}j"
+                                })
+                            with st.expander("🗓️ Jours de versement détectés"):
+                                st.dataframe(pd.DataFrame(lignes), use_container_width=True, hide_index=True)
                     with tab2:
                         st.subheader(f"Délais par assureur ({p_name})")
                         if not p_hist.empty:
@@ -2497,6 +2599,7 @@ elif st.session_state.page == "pos7350":
                 seances_pat = df_physio[df_physio["patient"] == pat]["date"]
                 if seances_pat.empty: continue
                 if (ajd - seances_pat.max()).days > jours_inactif: continue
+                if (ajd - date).days > jours_inactif: continue
                 erreurs_fact.append({
                     "N° facture":     num,
                     "Patient":        pat,
@@ -2566,3 +2669,456 @@ elif st.session_state.page == "pos7350":
             import traceback; st.code(traceback.format_exc())
     else:
         st.info("👈 Chargez l'export Prestations dans la sidebar pour commencer.")
+
+# ==========================================
+# 🎓 MODULE FORMATIONS
+# ==========================================
+elif st.session_state.page == "formations":
+
+    _logo_b64_f = "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"
+    st.markdown(f'''<div style="position:fixed;top:60px;right:24px;z-index:999;opacity:0.85;">
+        <img src="data:image/png;base64,{_logo_b64_f}" style="height:32px;" />
+    </div>''', unsafe_allow_html=True)
+    st.markdown("<style>.block-container { padding-left: 1rem; padding-right: 1rem; max-width: 100%; }</style>", unsafe_allow_html=True)
+
+    if st.sidebar.button("⬅️ Retour Accueil", key="btn_back_formations"):
+        st.session_state.page = "accueil"
+        st.rerun()
+
+    st.title("🎓 Suivi des formations")
+
+    mode = st.sidebar.radio("Mode", ["📋 Créer fichier de configuration", "📊 Suivi des formations"], key="formations_mode")
+
+    # ── MODE 1 : CRÉER CONFIGURATION ─────────────────────────────
+    if mode == "📋 Créer fichier de configuration":
+        st.subheader("📋 Configuration de l'équipe")
+        st.caption("Renseignez les informations de chaque employé. Téléchargez ensuite le fichier Excel généré — il servira de base pour le suivi des formations.")
+
+        # Nombre d'employés
+        n = st.number_input("Nombre d'employés", min_value=1, max_value=30, value=3, step=1, key="nb_emp")
+
+        # Tableau de saisie
+        st.markdown("**Données des employés**")
+
+        cols_header = st.columns([2, 2, 1.2, 1.5, 1.8, 2, 2, 1.8, 1.5, 1.2])
+        headers = ["Nom", "Prénom", "Taux (%)", "Jours droit\n(à 100%)", "Budget CHF\n(à 100%)", "Date engagement", "Date avenant", "Taux avenant (%)", "Décompte", "Report solde"]
+        for col, h in zip(cols_header, headers):
+            col.markdown(f"<small><b>{h}</b></small>", unsafe_allow_html=True)
+
+        employees = []
+        for i in range(int(n)):
+            c = st.columns([2, 2, 1.2, 1.5, 1.8, 2, 2, 1.8, 1.5, 1.2])
+            nom         = c[0].text_input("", key=f"nom_{i}", placeholder="Dupont", label_visibility="collapsed")
+            prenom      = c[1].text_input("", key=f"prenom_{i}", placeholder="Marie", label_visibility="collapsed")
+            taux        = c[2].number_input("", min_value=10, max_value=100, value=100, step=5, key=f"taux_{i}", label_visibility="collapsed")
+            jours       = c[3].number_input("", min_value=0.0, max_value=30.0, value=3.0, step=0.5, key=f"jours_{i}", label_visibility="collapsed")
+            budget      = c[4].number_input("", min_value=0, max_value=20000, value=1500, step=100, key=f"budget_{i}", label_visibility="collapsed")
+            date_eng    = c[5].date_input("", key=f"date_eng_{i}", label_visibility="collapsed")
+            date_av     = c[6].date_input("", key=f"date_av_{i}", value=None, label_visibility="collapsed")
+            taux_av     = c[7].number_input("", min_value=0, max_value=100, value=0, step=5, key=f"taux_av_{i}", label_visibility="collapsed", help="0 = pas d'avenant")
+            decompte    = c[8].selectbox("", ["Civil", "Engagement"], key=f"decompte_{i}", label_visibility="collapsed")
+            report      = c[9].checkbox("", key=f"report_{i}", label_visibility="collapsed")
+            employees.append({
+                "Nom": nom, "Prénom": prenom, "Taux (%)": taux,
+                "Jours droit (100%)": jours, "Budget CHF (100%)": budget,
+                "Date engagement": str(date_eng),
+                "Date avenant": str(date_av) if date_av else "",
+                "Taux avenant (%)": taux_av if taux_av > 0 else "",
+                "Type décompte": decompte,
+                "Report solde": "Oui" if report else "Non",
+            })
+
+        if st.button("💾 Générer le fichier Excel de configuration", type="primary"):
+            import io
+            from openpyxl import Workbook
+            from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+            from openpyxl.utils import get_column_letter
+
+            wb = Workbook()
+
+            # ── Feuille Employés ──
+            ws_emp = wb.active
+            ws_emp.title = "Employés"
+
+            header_fill = PatternFill("solid", start_color="6D2B3D")
+            header_font = Font(bold=True, color="FFFFFF", name="Arial", size=10)
+            data_font   = Font(name="Arial", size=10)
+            border_thin = Border(
+                left=Side(style="thin", color="DDDDDD"),
+                right=Side(style="thin", color="DDDDDD"),
+                bottom=Side(style="thin", color="DDDDDD"),
+            )
+            alt_fill    = PatternFill("solid", start_color="F9EEF1")
+
+            emp_headers = ["Nom", "Prénom", "Taux (%)", "Jours droit (100%)", "Budget CHF (100%)",
+                           "Date engagement", "Date avenant", "Taux avenant (%)", "Type décompte", "Report solde",
+                           "Jours effectifs", "Budget effectif CHF"]
+            col_widths  = [18, 16, 12, 18, 18, 16, 14, 18, 14, 14, 14, 20]
+
+            for ci, (h, w) in enumerate(zip(emp_headers, col_widths), 1):
+                cell = ws_emp.cell(row=1, column=ci, value=h)
+                cell.font = header_font
+                cell.fill = header_fill
+                cell.alignment = Alignment(horizontal="center", wrap_text=True)
+                ws_emp.column_dimensions[get_column_letter(ci)].width = w
+            ws_emp.row_dimensions[1].height = 30
+
+            for ri, emp in enumerate(employees, 2):
+                row_fill = alt_fill if ri % 2 == 0 else PatternFill("solid", start_color="FFFFFF")
+                vals = [
+                    emp["Nom"], emp["Prénom"], emp["Taux (%)"],
+                    emp["Jours droit (100%)"], emp["Budget CHF (100%)"],
+                    emp["Date engagement"], emp["Date avenant"],
+                    emp["Taux avenant (%)"], emp["Type décompte"], emp["Report solde"],
+                    f"=D{ri}*C{ri}/100",
+                    f"=E{ri}*C{ri}/100",
+                ]
+                for ci, val in enumerate(vals, 1):
+                    cell = ws_emp.cell(row=ri, column=ci, value=val)
+                    cell.font = data_font
+                    cell.fill = row_fill
+                    cell.border = border_thin
+                    cell.alignment = Alignment(horizontal="center" if ci > 2 else "left")
+
+            ws_emp.freeze_panes = "A2"
+
+            # ── Feuille Formations ──
+            ws_form = wb.create_sheet("Formations")
+            form_headers = [
+                "Employé (Nom Prénom)", "Date", "Nom de la formation", "Organisme",
+                "Coût formation CHF", "Coût déplacement CHF", "Coût hébergement CHF", "Coût nourriture CHF",
+                "Total CHF", "Payé par", "Remboursé", "Date remboursement", "Notes"
+            ]
+            form_widths = [22, 12, 30, 20, 18, 20, 20, 18, 12, 14, 12, 18, 25]
+            for ci, (h, w) in enumerate(zip(form_headers, form_widths), 1):
+                cell = ws_form.cell(row=1, column=ci, value=h)
+                cell.font = header_font
+                cell.fill = header_fill
+                cell.alignment = Alignment(horizontal="center", wrap_text=True)
+                ws_form.column_dimensions[get_column_letter(ci)].width = w
+            ws_form.row_dimensions[1].height = 30
+
+            # 3 lignes exemple
+            example_rows = [
+                ["Dupont Marie", "2026-03-01", "Formation IASTM niveau 1", "Institut XY",
+                 450, 80, 0, 30, "=E2+F2+G2+H2", "Employé", "Non", "", "Remboursement à planifier"],
+                ["Dupont Marie", "2026-04-15", "Congrès physiothérapie", "SSRPM",
+                 300, 150, 200, 60, "=E3+F3+G3+H3", "Cabinet", "—", "", ""],
+                ["Martin Paul", "2026-05-10", "Formation manuelle avancée", "HES-SO",
+                 600, 0, 0, 0, "=E4+F4+G4+H4", "Partagé 50/50", "Partiel", "", "Cabinet a payé 300 CHF"],
+            ]
+            ex_fill = PatternFill("solid", start_color="FFF3CD")
+            for ri, row in enumerate(example_rows, 2):
+                for ci, val in enumerate(row, 1):
+                    cell = ws_form.cell(row=ri, column=ci, value=val)
+                    cell.font = Font(name="Arial", size=10, color="888888", italic=True)
+                    cell.fill = ex_fill
+                    cell.border = border_thin
+                    cell.alignment = Alignment(horizontal="center" if ci > 2 else "left")
+
+            ws_form.freeze_panes = "A2"
+
+            # ── Feuille Tableau de bord ──
+            ws_db = wb.create_sheet("Tableau de bord")
+            ws_db["A1"] = "Ce tableau est généré automatiquement par l'application 36.9° Analytique."
+            ws_db["A1"].font = Font(bold=True, italic=True, color="B5546A", name="Arial", size=10)
+            ws_db["A2"] = "Importez ce fichier dans le module Formations pour voir le suivi en temps réel."
+            ws_db["A2"].font = Font(italic=True, color="888888", name="Arial", size=10)
+            ws_db.column_dimensions["A"].width = 65
+
+            buf = io.BytesIO()
+            wb.save(buf)
+            buf.seek(0)
+            st.download_button(
+                "⬇️ Télécharger le fichier de configuration",
+                data=buf,
+                file_name="formations_config.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
+
+    # ── MODE 2 : SUIVI DES FORMATIONS ────────────────────────────
+    else:
+        import io
+        from openpyxl import load_workbook
+        from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+        from openpyxl.utils import get_column_letter
+        import math
+
+        st.subheader("📊 Suivi des formations")
+
+        fichier = st.sidebar.file_uploader("📂 Fichier de configuration (.xlsx)", type=["xlsx"], key="formations_file")
+
+        if fichier is None:
+            st.info("👈 Chargez votre fichier formations_config.xlsx dans la sidebar pour commencer.")
+            st.stop()
+
+        # ── Lecture du fichier ──
+        try:
+            df_emp   = pd.read_excel(fichier, sheet_name="Employés")
+            fichier.seek(0)
+            df_form_raw = pd.read_excel(fichier, sheet_name="Formations")
+        except Exception as e:
+            st.error(f"Erreur lecture fichier : {e}")
+            st.stop()
+
+        # Nettoyer colonnes
+        df_emp.columns    = [str(c).strip() for c in df_emp.columns]
+        df_form_raw.columns = [str(c).strip() for c in df_form_raw.columns]
+
+        # Calculer taux effectif et droits
+        ajd = pd.Timestamp(datetime.today().date())
+
+        def taux_effectif(row):
+            if pd.notna(row.get("Date avenant")) and str(row.get("Date avenant","")).strip() not in ("","None","NaT"):
+                taux_av = row.get("Taux avenant (%)", 0)
+                if pd.notna(taux_av) and float(taux_av) > 0:
+                    return float(taux_av)
+            return float(row.get("Taux (%)", 100))
+
+        df_emp["_taux_eff"] = df_emp.apply(taux_effectif, axis=1)
+        df_emp["_jours_eff"] = df_emp["Jours droit (100%)"].astype(float) * df_emp["_taux_eff"] / 100
+        df_emp["_budget_eff"] = df_emp["Budget CHF (100%)"].astype(float) * df_emp["_taux_eff"] / 100
+        df_emp["_nom_complet"] = df_emp["Nom"].astype(str).str.strip() + " " + df_emp["Prénom"].astype(str).str.strip()
+
+        # Calculer l'année de référence par employé (civil ou engagement)
+        def annee_debut(row):
+            decompte = str(row.get("Type décompte","Civil")).strip()
+            if decompte == "Civil":
+                return pd.Timestamp(f"{ajd.year}-01-01")
+            else:
+                try:
+                    eng = pd.Timestamp(str(row["Date engagement"]))
+                    debut = pd.Timestamp(f"{ajd.year}-{eng.month:02d}-{eng.day:02d}")
+                    if debut > ajd:
+                        debut = pd.Timestamp(f"{ajd.year-1}-{eng.month:02d}-{eng.day:02d}")
+                    return debut
+                except:
+                    return pd.Timestamp(f"{ajd.year}-01-01")
+
+        df_emp["_debut_periode"] = df_emp.apply(annee_debut, axis=1)
+
+        # Filtrer les formations (exclure lignes exemple en italique / sans employé valide)
+        noms_valides = set(df_emp["_nom_complet"].str.lower().tolist())
+        col_emp_form = df_form_raw.columns[0]
+        col_date_form = df_form_raw.columns[1]
+
+        df_form = df_form_raw.copy()
+        df_form[col_date_form] = pd.to_datetime(df_form[col_date_form], errors="coerce")
+        df_form = df_form[df_form[col_emp_form].astype(str).str.strip().str.lower().isin(noms_valides)]
+        df_form = df_form.dropna(subset=[col_date_form])
+
+        # ── TABS ──
+        tab1, tab2, tab3, tab4 = st.tabs(["➕ Saisir formation", "📊 Tableau de bord", "💰 Paiements", "📅 Soldes & reports"])
+
+        # ── TAB 1 : SAISIE ──
+        with tab1:
+            st.subheader("➕ Ajouter une formation")
+            noms_emp = sorted(df_emp["_nom_complet"].tolist())
+
+            c1, c2 = st.columns(2)
+            f_emp   = c1.selectbox("Employé", noms_emp, key="f_emp")
+            f_date  = c2.date_input("Date de la formation", key="f_date")
+            f_nom   = st.text_input("Nom de la formation", key="f_nom")
+            f_org   = st.text_input("Organisme / prestataire", key="f_org")
+
+            st.markdown("**Coûts**")
+            cc = st.columns(4)
+            f_cout_form  = cc[0].number_input("Formation (CHF)", min_value=0, value=0, step=10, key="f_cf")
+            f_cout_dep   = cc[1].number_input("Déplacement (CHF)", min_value=0, value=0, step=10, key="f_cd")
+            f_cout_heb   = cc[2].number_input("Hébergement (CHF)", min_value=0, value=0, step=10, key="f_ch")
+            f_cout_nour  = cc[3].number_input("Nourriture (CHF)", min_value=0, value=0, step=10, key="f_cn")
+            f_total = f_cout_form + f_cout_dep + f_cout_heb + f_cout_nour
+
+            cp = st.columns(3)
+            f_paye_par  = cp[0].selectbox("Payé par", ["Employé", "Cabinet", "Partagé 50/50", "Partagé autre"], key="f_pp")
+            f_rembourse = cp[1].selectbox("Statut remboursement", ["Non", "Partiel", "Oui", "—"], key="f_rb")
+            f_notes     = cp[2].text_input("Notes", key="f_notes")
+
+            st.info(f"💰 **Total : CHF {f_total:,.2f}**")
+
+            if st.button("➕ Ajouter cette formation", type="primary", key="btn_add_form"):
+                if not f_nom.strip():
+                    st.warning("Veuillez saisir le nom de la formation.")
+                else:
+                    # Recharger le workbook et ajouter la ligne
+                    fichier.seek(0)
+                    wb_edit = load_workbook(fichier)
+                    ws_f = wb_edit["Formations"]
+                    last_row = ws_f.max_row + 1
+                    data_font_e = Font(name="Arial", size=10)
+                    border_thin_e = Border(
+                        left=Side(style="thin", color="DDDDDD"),
+                        right=Side(style="thin", color="DDDDDD"),
+                        bottom=Side(style="thin", color="DDDDDD"),
+                    )
+                    new_row = [
+                        f_emp, str(f_date), f_nom, f_org,
+                        f_cout_form, f_cout_dep, f_cout_heb, f_cout_nour,
+                        f_total, f_paye_par, f_rembourse, "", f_notes
+                    ]
+                    for ci, val in enumerate(new_row, 1):
+                        cell = ws_f.cell(row=last_row, column=ci, value=val)
+                        cell.font = data_font_e
+                        cell.border = border_thin_e
+
+                    buf = io.BytesIO()
+                    wb_edit.save(buf)
+                    buf.seek(0)
+                    st.success(f"✅ Formation '{f_nom}' ajoutée. Téléchargez le fichier mis à jour ci-dessous.")
+                    st.download_button(
+                        "⬇️ Télécharger le fichier mis à jour",
+                        data=buf,
+                        file_name="formations_config.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        key="dl_updated"
+                    )
+
+        # ── TAB 2 : TABLEAU DE BORD ──
+        with tab2:
+            st.subheader("📊 Tableau de bord — Droits et consommation")
+
+            col_total = df_form.columns[8] if len(df_form.columns) > 8 else None
+            col_paye  = df_form.columns[9] if len(df_form.columns) > 9 else None
+
+            dashboard_rows = []
+            for _, emp in df_emp.iterrows():
+                nom = emp["_nom_complet"]
+                debut = emp["_debut_periode"]
+                jours_droit = emp["_jours_eff"]
+                budget_droit = emp["_budget_eff"]
+                report_solde = str(emp.get("Report solde","Non")).strip() == "Oui"
+
+                # Formations de l'employé sur la période courante
+                df_e = df_form[df_form[col_emp_form].astype(str).str.strip().str.lower() == nom.lower()]
+                df_e_periode = df_e[df_e[col_date_form] >= debut] if not df_e.empty else df_e
+
+                nb_formations = len(df_e_periode)
+                # Chaque ligne = 1 jour de formation (simplification) — nb_jours = nombre de dates distinctes
+                jours_pris = len(df_e_periode[col_date_form].dt.date.unique()) if not df_e_periode.empty else 0
+
+                if col_total and not df_e_periode.empty:
+                    budget_consomme = pd.to_numeric(df_e_periode[col_total], errors="coerce").sum()
+                else:
+                    budget_consomme = 0.0
+
+                jours_restants  = jours_droit - jours_pris
+                budget_restant  = budget_droit - budget_consomme
+                pct_jours  = int(jours_pris / jours_droit * 100) if jours_droit > 0 else 0
+                pct_budget = int(budget_consomme / budget_droit * 100) if budget_droit > 0 else 0
+
+                alert = ""
+                if pct_jours >= 100 or pct_budget >= 100:
+                    alert = "🔴"
+                elif pct_jours >= 80 or pct_budget >= 80:
+                    alert = "🟠"
+                else:
+                    alert = "🟢"
+
+                dashboard_rows.append({
+                    "": alert,
+                    "Employé": nom,
+                    "Taux (%)": f"{emp['_taux_eff']:.0f}%",
+                    "Jours droit": f"{jours_droit:.1f}j",
+                    "Jours pris": f"{jours_pris}j",
+                    "Jours restants": f"{jours_restants:.1f}j",
+                    "Budget droit": f"CHF {budget_droit:,.0f}",
+                    "Consommé": f"CHF {budget_consomme:,.0f}",
+                    "Solde budget": f"CHF {budget_restant:,.0f}",
+                    "Nb formations": nb_formations,
+                    "Report": "✅" if report_solde else "—",
+                })
+
+            if dashboard_rows:
+                st.dataframe(pd.DataFrame(dashboard_rows), use_container_width=True, hide_index=True)
+                st.caption("🟢 < 80% utilisé · 🟠 ≥ 80% · 🔴 dépassé")
+            else:
+                st.info("Aucune donnée à afficher. Ajoutez des employés dans la configuration.")
+
+        # ── TAB 3 : PAIEMENTS ──
+        with tab3:
+            st.subheader("💰 Suivi des paiements")
+
+            if df_form.empty:
+                st.info("Aucune formation enregistrée.")
+            else:
+                col_rembourse = df_form.columns[10] if len(df_form.columns) > 10 else None
+                col_paye_par  = df_form.columns[9] if len(df_form.columns) > 9 else None
+                col_total_p   = df_form.columns[8] if len(df_form.columns) > 8 else None
+                col_nom_form  = df_form.columns[2] if len(df_form.columns) > 2 else None
+
+                # Filtre employé
+                choix_emp = st.selectbox("Filtrer par employé", ["Tous"] + sorted(df_emp["_nom_complet"].tolist()), key="filtre_paiement")
+                df_show = df_form.copy()
+                if choix_emp != "Tous":
+                    df_show = df_show[df_show[col_emp_form].astype(str).str.strip().str.lower() == choix_emp.lower()]
+
+                # A rembourser par le cabinet (payé par employé + non remboursé)
+                df_a_rembourser = df_show[
+                    df_show[col_paye_par].astype(str).str.strip().str.lower().isin(["employé","employe"]) &
+                    df_show[col_rembourse].astype(str).str.strip().str.lower().isin(["non", "partiel"])
+                ] if col_paye_par and col_rembourse else pd.DataFrame()
+
+                if not df_a_rembourser.empty:
+                    total_a_rembourser = pd.to_numeric(df_a_rembourser[col_total_p], errors="coerce").sum()
+                    st.error(f"⚠️ **À rembourser à l'employé : CHF {total_a_rembourser:,.2f}**")
+                    cols_display = [col_emp_form, col_date_form, col_nom_form, col_total_p, col_paye_par, col_rembourse]
+                    cols_display = [c for c in cols_display if c]
+                    st.dataframe(df_a_rembourser[cols_display], use_container_width=True, hide_index=True)
+                else:
+                    st.success("✅ Aucun remboursement en attente.")
+
+                st.markdown("---")
+                st.subheader("Toutes les formations")
+                cols_all = [col_emp_form, col_date_form, col_nom_form, col_total_p, col_paye_par, col_rembourse]
+                cols_all = [c for c in cols_all if c and c in df_show.columns]
+                st.dataframe(df_show[cols_all], use_container_width=True, hide_index=True)
+
+        # ── TAB 4 : SOLDES & REPORTS ──
+        with tab4:
+            st.subheader("📅 Soldes de droits & reports")
+            st.caption(f"Période de référence : du début de l'année (civil) ou de l'anniversaire d'engagement jusqu'au {ajd.strftime('%d.%m.%Y')}")
+
+            solde_rows = []
+            for _, emp in df_emp.iterrows():
+                nom = emp["_nom_complet"]
+                debut = emp["_debut_periode"]
+                jours_droit = emp["_jours_eff"]
+                budget_droit = emp["_budget_eff"]
+                report_actif = str(emp.get("Report solde","Non")).strip() == "Oui"
+                decompte = str(emp.get("Type décompte","Civil")).strip()
+
+                df_e = df_form[df_form[col_emp_form].astype(str).str.strip().str.lower() == nom.lower()]
+                df_e_periode = df_e[df_e[col_date_form] >= debut] if not df_e.empty else df_e
+                jours_pris = len(df_e_periode[col_date_form].dt.date.unique()) if not df_e_periode.empty else 0
+                budget_consomme = pd.to_numeric(df_e_periode[df_form.columns[8]], errors="coerce").sum() if not df_e_periode.empty and len(df_form.columns) > 8 else 0.0
+
+                solde_jours   = jours_droit - jours_pris
+                solde_budget  = budget_droit - budget_consomme
+
+                # Fin de période
+                if decompte == "Civil":
+                    fin_periode = pd.Timestamp(f"{ajd.year}-12-31")
+                else:
+                    try:
+                        eng = pd.Timestamp(str(emp["Date engagement"]))
+                        fin_periode = debut + pd.DateOffset(years=1) - pd.DateOffset(days=1)
+                    except:
+                        fin_periode = pd.Timestamp(f"{ajd.year}-12-31")
+                jours_restants_periode = (fin_periode - ajd).days
+
+                solde_rows.append({
+                    "Employé": nom,
+                    "Type décompte": decompte,
+                    "Fin de période": fin_periode.strftime("%d.%m.%Y"),
+                    "Jours restants dans la période": f"{jours_restants_periode}j",
+                    "Solde jours": f"{solde_jours:.1f}j",
+                    "Solde budget": f"CHF {solde_budget:,.0f}",
+                    "Report activé": "✅ Oui" if report_actif else "❌ Non",
+                    "Solde reporté (N+1)": f"{solde_jours:.1f}j / CHF {solde_budget:,.0f}" if report_actif and solde_jours > 0 else "—",
+                })
+
+            if solde_rows:
+                st.dataframe(pd.DataFrame(solde_rows), use_container_width=True, hide_index=True)
+                st.caption("Le report de solde est une option indicative — activez-le par employé dans le fichier de configuration.")
+            else:
+                st.info("Aucun employé configuré.")
