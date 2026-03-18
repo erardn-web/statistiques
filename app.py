@@ -1024,16 +1024,9 @@ elif st.session_state.page == "factures":
             if not f_att_old.empty:
                 st.caption(f"⚠️ {len(f_att_old)} facture(s) de plus de 35 jours exclues des projections ({chf_int(round(f_att_old['montant'].sum()))} CHF) — à traiter manuellement.")
 
-            # Filtre assureurs (persistant)
-            ass_dispo_sim = sorted(f_att_liq["assureur"].unique().tolist())
-            sel_ass_sim = st.multiselect(
-                "Filtrer par assureur (simulation) :", ass_dispo_sim,
-                default=ass_dispo_sim, key="sel_ass_sim"
-            )
-
             def _run_simulation(date_cible, periods_sel, options_p, df, f_att_liq,
-                                sel_ass_sim, ass_dispo_sim, corriger_jours, ajd):
-                """Calcule la simulation et retourne le dict résultat."""
+                                corriger_jours, ajd):
+                """Calcule la simulation et retourne le dict résultat avec détail par assureur."""
                 ts_cible = pd.Timestamp(date_cible)
                 jour_semaine = ts_cible.weekday()
                 if jour_semaine == 5:
@@ -1048,7 +1041,6 @@ elif st.session_state.page == "factures":
                 jours_delta = (ts_effective - ajd).days
                 if jours_delta < 0:
                     return None
-                f_att_sim = f_att_liq[f_att_liq["assureur"].isin(sel_ass_sim)].copy()
                 res_sim = []
                 for p_nom in periods_sel:
                     val = options_p[p_nom]
@@ -1057,33 +1049,48 @@ elif st.session_state.page == "factures":
                     p_hist_sim["delai"] = (p_hist_sim["date_paiement"] - p_hist_sim["date_facture"]).dt.days
                     p_hist_sim = p_hist_sim[(p_hist_sim["assureur"] != "Patient") & (p_hist_sim["delai"] >= 1)]
                     jv_sim = calculer_jours_versement(p_hist_sim) if corriger_jours else None
-                    liq, _ = calculer_liquidites_fournisseur(f_att_sim, p_hist_sim, [jours_delta],
-                                                              jours_versement=jv_sim, date_ref=ajd)
-                    res_sim.append({"Période": p_nom, "Estimation (CHF)": f"{chf_int(round(liq[jours_delta]))}",
-                                    "Assureurs": f"{len(sel_ass_sim)}/{len(ass_dispo_sim)}"})
+                    # Total période
+                    liq_tot, _ = calculer_liquidites_fournisseur(f_att_liq, p_hist_sim, [jours_delta],
+                                                                  jours_versement=jv_sim, date_ref=ajd)
+                    # Détail par assureur
+                    detail_ass = []
+                    for ass_n in sorted(f_att_liq["assureur"].unique()):
+                        f_ass = f_att_liq[f_att_liq["assureur"] == ass_n]
+                        if f_ass.empty: continue
+                        liq_ass, _ = calculer_liquidites_fournisseur(f_ass, p_hist_sim, [jours_delta],
+                                                                      jours_versement=jv_sim, date_ref=ajd)
+                        montant = round(liq_ass[jours_delta])
+                        if montant > 0:
+                            detail_ass.append({"Assureur": ass_n,
+                                               "Factures en attente": len(f_ass),
+                                               "Brut (CHF)": chf_int(round(f_ass["montant"].sum())),
+                                               "Estimation (CHF)": chf_int(montant)})
+                    res_sim.append({
+                        "periode": p_nom,
+                        "total": chf_int(round(liq_tot[jours_delta])),
+                        "detail": detail_ass,
+                    })
                 return {
                     "date": ts_cible.strftime("%d.%m.%Y"),
                     "jours": (ts_cible - ajd).days,
                     "note_weekend": note_weekend,
                     "res_sim": res_sim,
-                    "date_cible_raw": str(date_cible),
-                    "sel_ass_sim": sel_ass_sim,
                     "corriger_jours": corriger_jours,
                 }
 
             # Lancer si bouton cliqué
             if btn_simuler:
                 result = _run_simulation(date_cible, periods_sel, options_p, df, f_att_liq,
-                                         sel_ass_sim, ass_dispo_sim, corriger_jours, ajd)
+                                         corriger_jours, ajd)
                 if result:
                     st.session_state["sim_result"] = result
 
-            # Recalculer si le filtre assureurs a changé (simulation déjà lancée)
+            # Recalculer si correction jour a changé
             elif "sim_result" in st.session_state:
                 sr = st.session_state["sim_result"]
-                if sr.get("sel_ass_sim") != sel_ass_sim or sr.get("corriger_jours") != corriger_jours:
+                if sr.get("corriger_jours") != corriger_jours:
                     result = _run_simulation(date_cible, periods_sel, options_p, df, f_att_liq,
-                                             sel_ass_sim, ass_dispo_sim, corriger_jours, ajd)
+                                             corriger_jours, ajd)
                     if result:
                         st.session_state["sim_result"] = result
 
@@ -1093,10 +1100,16 @@ elif st.session_state.page == "factures":
                 st.markdown(f"**🔮 Simulation au {sr['date']}** — dans {sr['jours']} jour{'s' if sr['jours'] > 1 else ''}")
                 if sr["note_weekend"]:
                     st.caption(sr["note_weekend"])
-                df_sim = pd.DataFrame(sr["res_sim"])
+                # Tableau synthèse
+                df_sim = pd.DataFrame([{"Période": r["periode"], "Estimation (CHF)": r["total"]} for r in sr["res_sim"]])
                 rows_html = "".join(f"<tr>{''.join(f'<td style=padding:6px 12px;border-bottom:1px solid #e0e0e0;>{v}</td>' for v in r)}</tr>" for r in df_sim.values)
                 headers_html = "".join(f"<th style='padding:6px 12px;border-bottom:2px solid #b0c4d8;background:#AED6F1;text-align:left;font-weight:600;'>{c}</th>" for c in df_sim.columns)
                 st.markdown(f"<table style='background:#D6EAF8;border-collapse:collapse;width:auto;font-size:0.9rem;'><thead><tr>{headers_html}</tr></thead><tbody>{rows_html}</tbody></table>", unsafe_allow_html=True)
+                # Détail par assureur — un expander par période
+                for r in sr["res_sim"]:
+                    if r["detail"]:
+                        with st.expander(f"🔍 Détail par assureur — {r['periode']} (total : {r['total']} CHF)"):
+                            st.dataframe(pd.DataFrame(r["detail"]), use_container_width=True, hide_index=True)
                 if st.button("✖ Effacer la simulation", key="clear_sim"):
                     del st.session_state["sim_result"]
                     st.rerun()
