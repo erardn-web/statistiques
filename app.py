@@ -289,17 +289,21 @@ def convertir_date(val):
     except:
         return pd.to_datetime(val, errors="coerce")
 
-def calculer_jours_versement(p_hist):
+def calculer_jours_versement(p_hist, versements_recus=False):
     """Calcule le jour de versement effectif par assureur.
     Basé sur les 2 derniers mois uniquement pour refléter le comportement récent.
     - Jour dominant >= 50% : on utilise ce jour.
     - Jour dominant < 50% : on décale d'une semaine (conservateur).
-    Retourne {assureur: (weekday 0-6, decaler_semaine bool)}
+    - versements_recus=True : si le jour dominant est aujourd'hui, décale à +7j
+      (les virements du jour ont déjà été reçus).
+    Retourne {assureur: (weekday 0-6, decaler_semaine bool, detail str)}
     """
     import pandas as pd
+    from datetime import datetime
     resultat = {}
     if p_hist.empty:
         return resultat
+    aujourd_hui = pd.Timestamp(datetime.today().date()).dayofweek
     # Restreindre aux 2 derniers mois pour capter les changements récents
     date_max = p_hist["date_paiement"].dropna().max()
     limite   = date_max - pd.DateOffset(months=2)
@@ -315,10 +319,14 @@ def calculer_jours_versement(p_hist):
         total  = len(jours)
         dominant_j   = counts.idxmax()
         dominant_pct = counts.max() / total
+        # Décaler si pattern faible OU si versements d'aujourd'hui déjà reçus
+        decaler = dominant_pct < 0.50 or (versements_recus and dominant_j == aujourd_hui)
         # Résumé des 2 premiers jours par fréquence décroissante
         top2 = counts.head(2)
         detail = ", ".join(f"{round(n/total*100)}% {jours_fr.get(j,'?')}" for j, n in top2.items())
-        resultat[str(ass)] = (int(dominant_j), dominant_pct < 0.50, detail)
+        if versements_recus and dominant_j == aujourd_hui:
+            detail += " ⚠️ déjà reçu"
+        resultat[str(ass)] = (int(dominant_j), decaler, detail)
     return resultat
 
 def jours_avant_prochain_versement(date_ref, weekday_cible, decaler_semaine=False):
@@ -954,6 +962,9 @@ elif st.session_state.page == "factures":
             btn_simuler = st.sidebar.button("🔮 Simuler", use_container_width=True)
             corriger_jours = st.sidebar.checkbox("🗓️ Correction par jour de versement", value=False,
                 help="Exclut les assureurs dont le jour de paiement habituel ne tombe pas dans l'horizon simulé.")
+            versements_recus = st.sidebar.checkbox("✅ Versements d'aujourd'hui déjà reçus", value=False,
+                help="Si coché, les assureurs dont le jour habituel est aujourd'hui sont décalés à la semaine prochaine. Ex: CSS paie le mercredi — si vous cochez ceci un mercredi, CSS ne sera plus inclus dans la simulation de demain.",
+                disabled=not corriger_jours)
             ass_disponibles_sim = sorted(df_brut[resoudre_colonnes(df_brut)["assureur"] or df_brut.columns[8]].dropna().unique().tolist()) if df_brut is not None else []
 
             _c = resoudre_colonnes(df_brut)
@@ -1018,14 +1029,24 @@ elif st.session_state.page == "factures":
             f_att["delai_actuel"] = (ajd - f_att["date_facture"]).dt.days
             st.metric("💰 TOTAL BRUT EN ATTENTE", f"{chf(f_att['montant'].sum())} CHF")
 
+            # Séparer les factures Patient — comportement individuel non modélisable
+            f_att_patient = f_att[f_att["assureur"] == "Patient"].copy()
+            f_att_assureurs = f_att[f_att["assureur"] != "Patient"].copy()
+
+            if not f_att_patient.empty:
+                st.caption(
+                    f"ℹ️ {len(f_att_patient)} facture(s) Patient ({chf_int(round(f_att_patient['montant'].sum()))} CHF) "
+                    f"exclues des projections — comportement individuel non modélisable statistiquement."
+                )
+
             # Facteur pessimiste : exclure les factures > 35 jours des projections de liquidités
-            f_att_liq = f_att[f_att["delai_actuel"] <= 35].copy()
-            f_att_old = f_att[f_att["delai_actuel"] > 35].copy()
+            f_att_liq = f_att_assureurs[f_att_assureurs["delai_actuel"] <= 35].copy()
+            f_att_old = f_att_assureurs[f_att_assureurs["delai_actuel"] > 35].copy()
             if not f_att_old.empty:
                 st.caption(f"⚠️ {len(f_att_old)} facture(s) de plus de 35 jours exclues des projections ({chf_int(round(f_att_old['montant'].sum()))} CHF) — à traiter manuellement.")
 
             def _run_simulation(date_cible, periods_sel, options_p, df, f_att_liq,
-                                corriger_jours, ajd):
+                                corriger_jours, versements_recus, ajd):
                 """Calcule la simulation et retourne le dict résultat avec détail par assureur."""
                 ts_cible = pd.Timestamp(date_cible)
                 jour_semaine = ts_cible.weekday()
@@ -1048,7 +1069,7 @@ elif st.session_state.page == "factures":
                     p_hist_sim = df[(df["date_paiement"].notna()) & (df["date_facture"] >= limit)].copy()
                     p_hist_sim["delai"] = (p_hist_sim["date_paiement"] - p_hist_sim["date_facture"]).dt.days
                     p_hist_sim = p_hist_sim[(p_hist_sim["assureur"] != "Patient") & (p_hist_sim["delai"] >= 1)]
-                    jv_sim = calculer_jours_versement(p_hist_sim) if corriger_jours else None
+                    jv_sim = calculer_jours_versement(p_hist_sim, versements_recus=versements_recus) if corriger_jours else None
                     # Total période
                     liq_tot, _ = calculer_liquidites_fournisseur(f_att_liq, p_hist_sim, [jours_delta],
                                                                   jours_versement=jv_sim, date_ref=ajd)
@@ -1076,21 +1097,22 @@ elif st.session_state.page == "factures":
                     "note_weekend": note_weekend,
                     "res_sim": res_sim,
                     "corriger_jours": corriger_jours,
+                    "versements_recus": versements_recus,
                 }
 
             # Lancer si bouton cliqué
             if btn_simuler:
                 result = _run_simulation(date_cible, periods_sel, options_p, df, f_att_liq,
-                                         corriger_jours, ajd)
+                                         corriger_jours, versements_recus, ajd)
                 if result:
                     st.session_state["sim_result"] = result
 
-            # Recalculer si correction jour a changé
+            # Recalculer si correction jour ou versements_recus a changé
             elif "sim_result" in st.session_state:
                 sr = st.session_state["sim_result"]
-                if sr.get("corriger_jours") != corriger_jours:
+                if sr.get("corriger_jours") != corriger_jours or sr.get("versements_recus") != versements_recus:
                     result = _run_simulation(date_cible, periods_sel, options_p, df, f_att_liq,
-                                             corriger_jours, ajd)
+                                             corriger_jours, versements_recus, ajd)
                     if result:
                         st.session_state["sim_result"] = result
 
