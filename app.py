@@ -1196,7 +1196,7 @@ elif st.session_state.page == "factures":
                                     return "color: red; font-weight: bold"
                                 return ""
                             st.dataframe(
-                                df_styled.style.applymap(colorier_ns, subset=["Écart-type (j)"]) if show_std else df_styled,
+                                df_styled.style.map(colorier_ns, subset=["Écart-type (j)"]) if show_std else df_styled,
                                 use_container_width=True,
                                 column_config={
                                     "Moyenne (j)":    st.column_config.NumberColumn(format="%.2f"),
