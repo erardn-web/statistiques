@@ -2050,83 +2050,108 @@ elif st.session_state.page == "bilan":
         try:
             xl = pd.ExcelFile(up)
             ong_f = next((s for s in xl.sheet_names if 'Facture' in s or 'facture' in s.lower()), None)
-            
+            ong_p = next((s for s in xl.sheet_names if s.strip().lower() == 'prestation'), None)
+
             if not ong_f:
                 st.error(f"L'onglet 'Facture' est introuvable. Onglets disponibles : {', '.join(xl.sheet_names)}")
                 st.stop()
-            
+
             df_f = pd.read_excel(up, sheet_name=ong_f)
-            
-           # --- CONFIGURATION DES COLONNES ---
-            col_date_f = df_f.columns[2]   # C: Date de la facture
-            col_fourn_f = df_f.columns[9]  # J: Fournisseur
-            col_ca_f = df_f.columns[14]    # O: Montant (CA)
-            col_paye_f = df_f.columns[15]  # P: Date de paiement
-            
+
+            # --- CONFIGURATION DES COLONNES FACTURES ---
+            col_num_f   = df_f.columns[0]   # A: Numéro de facture
+            col_date_f  = df_f.columns[2]   # C: Date de la facture
+            col_fourn_f = df_f.columns[9]   # J: Fournisseur
+            col_ca_f    = df_f.columns[14]  # O: Chiffre CHF
+            col_paye_f  = df_f.columns[15]  # P: Date de paiement
+
             df_f[col_date_f] = pd.to_datetime(df_f[col_date_f], errors='coerce')
-            df_f[col_ca_f] = pd.to_numeric(df_f[col_ca_f], errors='coerce').fillna(0)
+            df_f[col_ca_f]   = pd.to_numeric(df_f[col_ca_f], errors='coerce').fillna(0)
+            df_f[col_num_f]  = df_f[col_num_f].astype(str)
             df_f = df_f.dropna(subset=[col_date_f])
 
+            # --- OPTION DATE DE SÉANCE ---
+            st.sidebar.markdown("---")
+            utiliser_date_seance = False
+            if ong_p:
+                utiliser_date_seance = st.sidebar.checkbox(
+                    "📅 CA par date de séance (vs date de facture)",
+                    value=True,
+                    help="Utilise la date réelle de chaque prestation plutôt que la date d'émission de la facture. Plus précis pour le bilan mensuel."
+                )
+
+            # Préparer df_travail selon le mode choisi
+            if utiliser_date_seance and ong_p:
+                df_p = pd.read_excel(up, sheet_name=ong_p)
+                col_num_p  = df_p.columns[0]   # A: Numéro de facture
+                col_date_p = df_p.columns[1]   # B: Date séance
+                col_ca_p   = df_p.columns[11]  # L: Chiffre
+
+                df_p[col_num_p]  = df_p[col_num_p].astype(str)
+                df_p[col_date_p] = pd.to_datetime(df_p[col_date_p], errors='coerce')
+                df_p[col_ca_p]   = pd.to_numeric(df_p[col_ca_p], errors='coerce').fillna(0)
+                df_p = df_p[df_p[col_ca_p] > 0].dropna(subset=[col_date_p])
+
+                # Rattacher le fournisseur depuis les factures
+                fourn_map = df_f[[col_num_f, col_fourn_f, col_paye_f]].drop_duplicates(col_num_f)
+                df_w = df_p.merge(fourn_map, left_on=col_num_p, right_on=col_num_f, how='left')
+                col_date_w = col_date_p
+                col_ca_w   = col_ca_p
+                st.caption("ℹ️ CA calculé sur la **date réelle de chaque séance** (onglet Prestation).")
+            else:
+                df_w = df_f.copy()
+                col_date_w = col_date_f
+                col_ca_w   = col_ca_f
+                if not utiliser_date_seance and ong_p:
+                    st.caption("ℹ️ CA calculé sur la **date d'émission de la facture** (onglet Factures).")
+
             # Extraction des années uniques
-            annees = sorted(df_f[col_date_f].dt.year.unique().astype(int), reverse=True)
-            
-            # --- NOUVEAU : ALERTE MULTI-ANNÉES ---
+            annees = sorted(df_w[col_date_w].dt.year.dropna().unique().astype(int), reverse=True)
+
             if len(annees) > 1:
                 st.warning(
-                    f"⚠️ **Attention :** L'export chargé contient des données sur {len(annees)} années différentes "
-                    f"({min(annees)} à {max(annees)}). Le bilan est conçu pour analyser un exercice comptable unique. "
-                    "Veuillez faire un export des prestations du 1er janvier au 31 décembre d'une seule année."
+                    f"⚠️ **Attention :** L'export contient des données sur {len(annees)} années "
+                    f"({min(annees)} à {max(annees)}). Sélectionnez une année ci-dessous."
                 )
 
             annee = st.sidebar.selectbox("Année d'analyse :", annees)
-            df_sel = df_f[df_f[col_date_f].dt.year == annee].copy()
+            df_sel = df_w[df_w[col_date_w].dt.year == annee].copy()
 
             # --- SECTION CHIFFRE D'AFFAIRES ---
             st.subheader(f"📊 Analyse du Chiffre d'Affaires ({annee})")
             vue_ca = st.radio("Affichage CA par Fournisseur :", ["Annuel (Cumulé)", "Mensuel (Détail)"], horizontal=True)
 
             if vue_ca == "Annuel (Cumulé)":
-                ca_fourn = df_sel.groupby(col_fourn_f)[col_ca_f].sum().round(2).sort_values(ascending=False).reset_index()
-                
-                # Ajout de la ligne Total pour le cumul annuel
-                total_val = ca_fourn[col_ca_f].sum()
-                ligne_total = pd.DataFrame({col_fourn_f: ['TOTAL GÉNÉRAL'], col_ca_f: [total_val]})
+                ca_fourn = df_sel.groupby(col_fourn_f)[col_ca_w].sum().round(2).sort_values(ascending=False).reset_index()
+                total_val = ca_fourn[col_ca_w].sum()
+                ligne_total = pd.DataFrame({col_fourn_f: ['TOTAL GÉNÉRAL'], col_ca_w: [total_val]})
                 ca_fourn = pd.concat([ca_fourn, ligne_total], ignore_index=True)
-                
-                st.dataframe(
-                    ca_fourn, 
-                    use_container_width=True, 
-                    hide_index=True,
-                    column_config={
-                        col_fourn_f: "Fournisseur", 
-                        col_ca_f: st.column_config.NumberColumn("Total CA", format="%.2f CHF")
-                    }
-                )
-                _pdf_buf = generer_pdf_tableau(f"Bilan CA {annee}", ca_fourn.rename(columns={col_fourn_f: "Fournisseur", col_ca_f: "Total CA (CHF)"}), f"Exercice {annee}")
-                st.download_button("📄 Télécharger en PDF", _pdf_buf, file_name=f"bilan_ca_{annee}.pdf", mime="application/pdf", key="pdf_bilan_ca", use_container_width=True)
+                st.dataframe(ca_fourn, use_container_width=True, hide_index=True,
+                    column_config={col_fourn_f: "Fournisseur",
+                                   col_ca_w: st.column_config.NumberColumn("Total CA", format="%.2f CHF")})
+                _pdf_buf = generer_pdf_tableau(f"Bilan CA {annee}",
+                    ca_fourn.rename(columns={col_fourn_f: "Fournisseur", col_ca_w: "Total CA (CHF)"}),
+                    f"Exercice {annee}")
+                st.download_button("📄 Télécharger en PDF", _pdf_buf, file_name=f"bilan_ca_{annee}.pdf",
+                    mime="application/pdf", key="pdf_bilan_ca", use_container_width=True)
             else:
-                df_sel['Mois_Num'] = df_sel[col_date_f].dt.month
                 nom_mois = ["Jan", "Fév", "Mar", "Avr", "Mai", "Jun", "Jul", "Août", "Sep", "Oct", "Nov", "Déc"]
-                
-                pivot_fourn = df_sel.pivot_table(index=col_fourn_f, columns='Mois_Num', values=col_ca_f, aggfunc='sum', fill_value=0)
+                df_sel['Mois_Num'] = df_sel[col_date_w].dt.month
+                pivot_fourn = df_sel.pivot_table(index=col_fourn_f, columns='Mois_Num', values=col_ca_w, aggfunc='sum', fill_value=0)
                 pivot_fourn = pivot_fourn.reindex(columns=range(1, 13), fill_value=0)
                 pivot_fourn.columns = nom_mois
                 pivot_fourn = pivot_fourn.round(2)
                 pivot_fourn['TOTAL'] = pivot_fourn.sum(axis=1).round(2)
-                
-                # Ajout de la ligne de Totalisation en bas du tableau mensuel
                 pivot_total = pivot_fourn.sum(axis=0).to_frame().T
                 pivot_total.index = ["TOTAL GÉNÉRAL"]
-                pivot_final = pd.concat([pivot_fourn, pivot_total])
-                
-                pivot_final = pivot_final.round(2)
+                pivot_final = pd.concat([pivot_fourn, pivot_total]).round(2)
                 st.dataframe(pivot_final.style.format(lambda x: chf(x) if isinstance(x, (int,float)) else str(x)).highlight_max(axis=0, color='#d4f1f9'), use_container_width=True)
 
-            # --- SECTION IMPAYÉS AU 31.12 ---
+            # --- SECTION IMPAYÉS AU 31.12 --- (toujours basé sur l'onglet Factures)
             st.markdown("---")
             st.subheader(f"⏳ Factures Impayées au 31.12.{annee}")
-            
-            df_impayes = df_sel[df_sel[col_paye_f].isna()].copy()
+            df_sel_fact = df_f[df_f[col_date_f].dt.year == annee].copy()
+            df_impayes = df_sel_fact[df_sel_fact[col_paye_f].isna()].copy()
             total_impayes = df_impayes[col_ca_f].sum()
 
             if total_impayes > 0:
